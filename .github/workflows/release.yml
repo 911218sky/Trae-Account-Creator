@@ -83,21 +83,37 @@ jobs:
         echo "Removing ffmpeg to save space..."
         find bundle/TraeAccountCreator-${{ runner.os }}/browsers -name "*ffmpeg*" -delete
         
-        # Create Archive
+        # Create Archives
         cd bundle
+        
+        # 1. Full/Portable Version (with browsers)
         if [ "${{ runner.os }}" == "Windows" ]; then
-          7z a ../TraeAccountCreator-${{ runner.os }}.zip TraeAccountCreator-${{ runner.os }}
-          echo "ARCHIVE_NAME=TraeAccountCreator-${{ runner.os }}.zip" >> $GITHUB_ENV
+          7z a ../TraeAccountCreator-${{ runner.os }}-Portable.zip TraeAccountCreator-${{ runner.os }}
+          echo "ARCHIVE_PORTABLE=TraeAccountCreator-${{ runner.os }}-Portable.zip" >> $GITHUB_ENV
         else
-          tar -czf ../TraeAccountCreator-${{ runner.os }}.tar.gz TraeAccountCreator-${{ runner.os }}
-          echo "ARCHIVE_NAME=TraeAccountCreator-${{ runner.os }}.tar.gz" >> $GITHUB_ENV
+          tar -czf ../TraeAccountCreator-${{ runner.os }}-Portable.tar.gz TraeAccountCreator-${{ runner.os }}
+          echo "ARCHIVE_PORTABLE=TraeAccountCreator-${{ runner.os }}-Portable.tar.gz" >> $GITHUB_ENV
+        fi
+        
+        # 2. Lite Version (without browsers)
+        # Remove browsers folder from the bundle temporarily to zip it
+        rm -rf TraeAccountCreator-${{ runner.os }}/browsers
+        
+        if [ "${{ runner.os }}" == "Windows" ]; then
+          7z a ../TraeAccountCreator-${{ runner.os }}-Lite.zip TraeAccountCreator-${{ runner.os }}
+          echo "ARCHIVE_LITE=TraeAccountCreator-${{ runner.os }}-Lite.zip" >> $GITHUB_ENV
+        else
+          tar -czf ../TraeAccountCreator-${{ runner.os }}-Lite.tar.gz TraeAccountCreator-${{ runner.os }}
+          echo "ARCHIVE_LITE=TraeAccountCreator-${{ runner.os }}-Lite.tar.gz" >> $GITHUB_ENV
         fi
 
-    - name: Upload Artifact
+    - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: TraeAccountCreator-${{ runner.os }}
-        path: ${{ env.ARCHIVE_NAME }}
+        path: |
+          ${{ env.ARCHIVE_PORTABLE }}
+          ${{ env.ARCHIVE_LITE }}
 
   release:
     needs: build
@@ -112,9 +128,9 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: |
-          TraeAccountCreator-Windows/TraeAccountCreator-Windows.zip
-          TraeAccountCreator-Linux/TraeAccountCreator-Linux.tar.gz
-          TraeAccountCreator-macOS/TraeAccountCreator-macOS.tar.gz
+          TraeAccountCreator-Windows/*
+          TraeAccountCreator-Linux/*
+          TraeAccountCreator-macOS/*
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

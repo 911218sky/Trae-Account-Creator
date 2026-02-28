@@ -2,48 +2,29 @@
 
 This tool automates the account creation process for Trae using a custom domain and Gmail IMAP for email verification.
 
-## Using the Pre-built Release (Portable)
+## Using the Pre-built Release
 
-You can download a fully portable version from the [Releases](https://github.com/911218sky/Trae-Account-Creator/releases) page. This version includes everything you need (executable + browsers).
+You can download the tool from the [Releases](https://github.com/911218sky/Trae-Account-Creator/releases) page. We offer two versions:
 
-### 1. Download & Extract
-1.  Go to the **Releases** page.
-2.  Download the archive for your OS:
-    *   **Windows**: `.zip`
-    *   **Linux/macOS**: `.tar.gz`
-3.  **Extract the file** to a folder.
+1.  **Portable Version** (`-Portable`): Includes everything (executable + browsers). **Recommended for beginners.** No installation required, but file size is larger (~200MB).
+2.  **Lite Version** (`-Lite`): Contains only the executable. **Small size (~20MB)**, but you must install Playwright browsers manually.
 
-### 2. Configuration
-Inside the extracted folder, you will find `.env.example`.
-1.  Rename `.env.example` to `.env`.
-2.  Open `.env` with a text editor (Notepad, VS Code, etc.) and fill in your details:
+### Option 1: Portable Version (Recommended)
+1.  Download `TraeAccountCreator-<OS>-Portable.zip` (or `.tar.gz`).
+2.  Extract it.
+3.  Configure `.env` (rename `.env.example`).
+4.  Run `TraeAccountCreator.exe`.
 
-```ini
-# Gmail IMAP Configuration
-IMAP_SERVER=imap.gmail.com
-IMAP_PORT=993
-EMAIL_USER=your_email@gmail.com
-EMAIL_PASS=your_app_password  # The 16-char App Password
-
-# Custom Domain Configuration (Cloudflare Email Routing)
-CUSTOM_DOMAIN=your_domain.com
-
-# Browser Configuration
-HEADLESS=false
-```
-
-### 3. Run the Tool
-Simply double-click `TraeAccountCreator.exe` or run it from the terminal. **No installation required.**
-
-```powershell
-# Run single account registration
-.\TraeAccountCreator.exe
-
-# Run batch registration
-.\TraeAccountCreator.exe 10 2
-```
-
-> **Note:** The `browsers` folder included in the zip allows the tool to run without installing Playwright separately. Do not delete it.
+### Option 2: Lite Version (Advanced)
+1.  Download `TraeAccountCreator-<OS>-Lite.zip` (or `.tar.gz`).
+2.  Extract it.
+3.  Configure `.env`.
+4.  **Install Browsers**:
+    Open a terminal in the folder and run:
+    ```powershell
+    .\TraeAccountCreator.exe install-browsers
+    ```
+5.  Run the tool.
 
 ---
 
