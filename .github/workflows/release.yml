@@ -1,0 +1,120 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags, e.g. v1.0.0
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install dependencies
+      run: |
+        uv sync
+        uv pip install pyinstaller
+
+    - name: Install Playwright browsers
+      run: |
+        uv run playwright install chromium
+
+    - name: Build executable
+      shell: bash
+      run: |
+        # Use pyinstaller with spec file or options
+        # We need to make sure playwright browsers are handled correctly
+        # The simplest way is to tell users to run 'playwright install'
+        # But we can also set PLAYWRIGHT_BROWSERS_PATH to a local folder next to the exe
+        
+        uv run pyinstaller --onefile --name TraeAccountCreator-${{ runner.os }} --hidden-import=playwright --hidden-import=playwright.async_api --hidden-import=imaplib --hidden-import=email --hidden-import=python-dotenv --add-data ".env.example:." register.py
+
+    - name: Prepare Release Bundle
+      shell: bash
+      run: |
+        # Create a directory for the bundle
+        mkdir -p bundle/TraeAccountCreator-${{ runner.os }}
+        
+        # Copy executable
+        if [ "${{ runner.os }}" == "Windows" ]; then
+          cp dist/TraeAccountCreator-${{ runner.os }}.exe bundle/TraeAccountCreator-${{ runner.os }}/TraeAccountCreator.exe
+        else
+          cp dist/TraeAccountCreator-${{ runner.os }} bundle/TraeAccountCreator-${{ runner.os }}/TraeAccountCreator
+        fi
+        
+        # Copy .env.example
+        cp .env.example bundle/TraeAccountCreator-${{ runner.os }}/.env.example
+        
+        # Locate and copy Playwright browsers (Optimized)
+        echo "Locating Chromium..."
+        # Use Python to find the exact installed chromium folder
+        CHROMIUM_DIR=$(uv run python -c "from playwright.sync_api import sync_playwright; import os, pathlib; p=sync_playwright().start(); path=p.chromium.executable_path; p.stop(); path=pathlib.Path(path); found=[p for p in [path, *path.parents] if p.name.startswith('chromium-')]; print(found[0].as_posix() if found else '')")
+        
+        echo "Found Chromium at: $CHROMIUM_DIR"
+        
+        if [ -z "$CHROMIUM_DIR" ]; then
+          echo "Error: Could not find chromium directory."
+          exit 1
+        fi
+
+        # Copy only the specific chromium version
+        mkdir -p bundle/TraeAccountCreator-${{ runner.os }}/browsers
+        cp -r "$CHROMIUM_DIR" bundle/TraeAccountCreator-${{ runner.os }}/browsers/
+        
+        # Remove ffmpeg to reduce size (not needed for this app)
+        echo "Removing ffmpeg to save space..."
+        find bundle/TraeAccountCreator-${{ runner.os }}/browsers -name "*ffmpeg*" -delete
+        
+        # Create Archive
+        cd bundle
+        if [ "${{ runner.os }}" == "Windows" ]; then
+          7z a ../TraeAccountCreator-${{ runner.os }}.zip TraeAccountCreator-${{ runner.os }}
+          echo "ARCHIVE_NAME=TraeAccountCreator-${{ runner.os }}.zip" >> $GITHUB_ENV
+        else
+          tar -czf ../TraeAccountCreator-${{ runner.os }}.tar.gz TraeAccountCreator-${{ runner.os }}
+          echo "ARCHIVE_NAME=TraeAccountCreator-${{ runner.os }}.tar.gz" >> $GITHUB_ENV
+        fi
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: TraeAccountCreator-${{ runner.os }}
+        path: ${{ env.ARCHIVE_NAME }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Download Artifacts
+      uses: actions/download-artifact@v4
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          TraeAccountCreator-Windows/TraeAccountCreator-Windows.zip
+          TraeAccountCreator-Linux/TraeAccountCreator-Linux.tar.gz
+          TraeAccountCreator-macOS/TraeAccountCreator-macOS.tar.gz
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

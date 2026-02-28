@@ -1,0 +1,29 @@
+# Environment variables
+.env
+.env.local
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.spec
+
+# PyInstaller
+build/
+dist/
+*.exe
+TraeAccountCreator.exe
+
+# Playwright
+test-results/
+
+# Trae Account Creator
+cookies/
+accounts.txt
