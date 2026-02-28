@@ -76,6 +76,10 @@ accounts/
 
 You can import individual files or select multiple files at once for batch import.
 
+## Acknowledgements
+
+This project is inspired by and references [S-Trespassing/Trae-Account-Creator](https://github.com/S-Trespassing/Trae-Account-Creator). Special thanks to the original author for the inspiration and foundation.
+
 ## License
 
 GNU Affero General Public License v3.0 (AGPLv3)
