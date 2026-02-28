@@ -146,6 +146,13 @@ Currently, the easiest way is to ensure you have Playwright browsers installed o
 ### Missing .env file
 Ensure you have a `.env` file in the same directory as the executable. You can copy `.env.example` to `.env` and fill in your details.
 
+## Acknowledgements
+
+This project draws inspiration from the community. Special thanks to the work here:
+- Inspiration: https://github.com/S-Trespassing/Trae-Account-Creator
+
+We appreciate the ideas and effort shared by the author.
+
 ## License
 
 This project is licensed under the GNU Affero General Public License v3.0 (AGPLv3) - see the [LICENSE](LICENSE) file for details.
