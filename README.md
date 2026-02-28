@@ -52,6 +52,14 @@ uv run register.py
 uv run register.py 10 2
 ```
 
+## Account Management
+
+After registration, the tool saves session tokens and cookies in the `cookies/` directory as JSON files. You can use these credentials with [Trae-Account-Manager](https://github.com/Yang-505/Trae-Account-Manager) to manage and use your accounts.
+
+Each session file contains:
+- `token`: Authentication token for API access
+- `cookie`: Session cookie string for browser access
+
 ## License
 
 GNU Affero General Public License v3.0 (AGPLv3)
