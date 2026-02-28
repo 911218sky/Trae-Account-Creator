@@ -88,7 +88,7 @@ accounts/
 The merge functionality is now built into the main tool:
 
 ```bash
-# Using Python
+# Using Python (outputs to accounts_merged-YYYY-MM-DD.json)
 uv run python register.py merge-accounts
 
 # Using compiled .exe
@@ -98,7 +98,7 @@ TraeAccountCreator.exe merge-accounts
 uv run python register.py merge-accounts --output my_accounts.json
 ```
 
-This creates a single JSON file containing all accounts in an array format, making it easier to process or import into other tools.
+By default, the merged file will be named with the current date (e.g., `accounts_merged-2026-02-28.json`), making it easy to track when accounts were merged.
 
 **Note:** The standalone `merge_accounts.py` script is still available for advanced use cases.
 

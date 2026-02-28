@@ -29,4 +29,4 @@ test-results/
 cookies/
 accounts/
 accounts.txt
-accounts_merged.json
+accounts_merged*.json

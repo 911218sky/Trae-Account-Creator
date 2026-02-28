@@ -616,8 +616,10 @@ def _parse_args(argv: list[str]) -> tuple[str, argparse.Namespace]:
         return "install-browsers", parser.parse_args(argv[1:])
     
     if argv and argv[0].strip().lower() == "merge-accounts":
+        from datetime import datetime
+        default_output = f"accounts_merged-{datetime.now().strftime('%Y-%m-%d')}.json"
         parser = argparse.ArgumentParser(prog=f"{Path(sys.argv[0]).name} merge-accounts")
-        parser.add_argument("--output", default="accounts_merged.json", help="Output file path")
+        parser.add_argument("--output", default=default_output, help="Output file path")
         return "merge-accounts", parser.parse_args(argv[1:])
 
     parser = argparse.ArgumentParser(prog=Path(sys.argv[0]).name)
