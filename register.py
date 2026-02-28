@@ -59,7 +59,12 @@ class Settings:
 
     @staticmethod
     def load() -> Settings:
-        base_dir = Path(__file__).resolve().parent
+        # Use executable directory for frozen app, script directory otherwise
+        if getattr(sys, "frozen", False):
+            base_dir = Path(sys.executable).resolve().parent
+        else:
+            base_dir = Path(__file__).resolve().parent
+        
         cookies_dir = base_dir / "cookies"
         cookies_dir.mkdir(parents=True, exist_ok=True)
         return Settings(
