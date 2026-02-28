@@ -1,13 +1,29 @@
-import sys
-import os
+from __future__ import annotations
 
-# Fix for Playwright browser path in frozen executable
-# 1. Check if there is a 'browsers' folder next to the executable (Portable Mode)
-# 2. If not, use system default location (Install Mode)
-if getattr(sys, 'frozen', False):
+import argparse
+import asyncio
+import json
+import os
+import re
+import secrets
+import string
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+def _configure_playwright_browsers_path() -> None:
+    if not getattr(sys, "frozen", False):
+        return
+
     base_dir = os.path.dirname(sys.executable)
-    local_browsers_path = os.path.join(base_dir, 'browsers')
-    
+    local_browsers_path = os.path.join(base_dir, "browsers")
     if os.path.exists(local_browsers_path):
         os.environ["PLAYWRIGHT_BROWSERS_PATH"] = local_browsers_path
         print(f"Using local browsers from: {local_browsers_path}")
@@ -15,240 +31,408 @@ if getattr(sys, 'frozen', False):
         os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
         print("Using system default browsers")
 
-import asyncio
-import random
-import string
-import re
-import json
-from playwright.async_api import async_playwright
-from mail_client import AsyncMailClient
 
-from dotenv import load_dotenv
+_configure_playwright_browsers_path()
 
-# Load environment variables
-load_dotenv()
+from playwright.async_api import Page, Response, async_playwright  # noqa: E402
+from src.mail_client import AsyncMailClient  # noqa: E402
+from src.config import env_bool, env_int  # noqa: E402
+from src.logger import setup_logger  # noqa: E402
 
-# Setup directories
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-COOKIES_DIR = os.path.join(BASE_DIR, "cookies")
-ACCOUNTS_FILE = os.path.join(BASE_DIR, "accounts.txt")
-os.makedirs(COOKIES_DIR, exist_ok=True)
+logger = setup_logger("register")
 
-# Configuration
-HEADLESS = os.getenv("HEADLESS", "false").lower() == "true"
+JWT_RE = re.compile(r"eyJ[\w-]+\.[\w-]+\.[\w-]+")
 
-def generate_password(length=12):
-    """Generate a strong random password."""
-    chars = string.ascii_letters + string.digits + "!@#$%^&*"
-    return ''.join(random.choices(chars, k=length))
 
-async def save_account(email, password):
-    """Save the created account details to a file."""
-    write_header = not os.path.exists(ACCOUNTS_FILE) or os.path.getsize(ACCOUNTS_FILE) == 0
-    with open(ACCOUNTS_FILE, "a", encoding="utf-8") as f:
+@dataclass(frozen=True)
+class Settings:
+    base_dir: Path
+    cookies_dir: Path
+    accounts_file: Path
+    headless: bool
+    password_length: int
+    email_wait_timeout_s: int
+    email_poll_interval_s: int
+    navigation_timeout_ms: int
+    signup_url: str
+    gift_url: str
+
+    @staticmethod
+    def load() -> Settings:
+        base_dir = Path(__file__).resolve().parent
+        cookies_dir = base_dir / "cookies"
+        cookies_dir.mkdir(parents=True, exist_ok=True)
+        return Settings(
+            base_dir=base_dir,
+            cookies_dir=cookies_dir,
+            accounts_file=base_dir / "accounts.txt",
+            headless=env_bool("HEADLESS", False),
+            password_length=max(8, env_int("PASSWORD_LENGTH", 12)),
+            email_wait_timeout_s=max(10, env_int("EMAIL_WAIT_TIMEOUT_S", 60)),
+            email_poll_interval_s=max(1, env_int("EMAIL_POLL_INTERVAL_S", 5)),
+            navigation_timeout_ms=max(1_000, env_int("NAVIGATION_TIMEOUT_MS", 20_000)),
+            signup_url=os.getenv("SIGNUP_URL", "https://www.trae.ai/sign-up").strip(),
+            gift_url=os.getenv("GIFT_URL", "https://www.trae.ai/2026-anniversary-gift").strip(),
+        )
+
+
+def generate_password(length: int) -> str:
+    letters = string.ascii_letters
+    digits = string.digits
+    symbols = "!@#$%^&*"
+    if length < 8:
+        length = 8
+
+    required = [
+        secrets.choice(letters),
+        secrets.choice(digits),
+        secrets.choice(symbols),
+    ]
+    remaining = length - len(required)
+    pool = letters + digits + symbols
+    password_chars = required + [secrets.choice(pool) for _ in range(remaining)]
+    secrets.SystemRandom().shuffle(password_chars)
+    return "".join(password_chars)
+
+
+def _safe_filename(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("._") or "account"
+
+
+def extract_token(token_response_text: str | None) -> str | None:
+    if not token_response_text:
+        return None
+    try:
+        obj = json.loads(token_response_text)
+        token = obj.get("Result", {}).get("Token")
+        if isinstance(token, str) and token.strip():
+            return token.strip()
+    except Exception:
+        pass
+    
+    match = JWT_RE.search(token_response_text)
+    return match.group(0) if match else None
+
+
+def _append_account_sync(accounts_file: Path, email: str, password: str) -> None:
+    write_header = not accounts_file.exists() or accounts_file.stat().st_size == 0
+    with accounts_file.open("a", encoding="utf-8") as f:
         if write_header:
             f.write("Email    Password\n")
         f.write(f"{email}    {password}\n")
-    print(f"Account saved to: {ACCOUNTS_FILE}")
 
-async def run_registration():
-    """Run the registration process for a single account."""
-    print("Starting single account registration process...")
-    
-    mail_client = AsyncMailClient()
-    browser = None
-    context = None
-    page = None
 
-    try:
-        # 1. Setup Mail
-        await mail_client.start()
-        email = mail_client.get_email()
-        password = generate_password()
+async def save_account(accounts_file: Path, email: str, password: str, lock: asyncio.Lock) -> None:
+    async with lock:
+        await asyncio.to_thread(_append_account_sync, accounts_file, email, password)
+    logger.info("Account saved to: %s", accounts_file)
 
-        # 2. Setup Browser
-        async with async_playwright() as p:
-            print(f"Launching browser (Headless: {HEADLESS})...")
-            browser = await p.chromium.launch(
-                headless=HEADLESS,
-                args=[
-                    "--disable-gpu",
-                    "--disable-dev-shm-usage",
-                    "--no-sandbox",
-                    "--disable-software-rasterizer",
-                    "--disable-extensions",
-                ]
-            )
-            context = await browser.new_context()
-            page = await context.new_page()
 
-            # 3. Sign Up Process
-            print("Navigating to sign-up page...")
-            await page.goto("https://www.trae.ai/sign-up")
-            
-            # Fill Email
-            print(f"Filling email: {email}")
-            await page.get_by_role("textbox", name="Email").fill(email)
-            await page.get_by_text("Send Code").click()
-            print("Verification code sent, waiting for email...")
+def cookies_to_header(cookies: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for c in cookies:
+        name = c.get("name")
+        value = c.get("value")
+        if not isinstance(name, str) or not isinstance(value, str):
+            continue
+        parts.append(f"{name}={value}")
+    return "; ".join(parts)
 
-            # Poll for code
-            verification_code = None
-            for i in range(12): # 60 seconds max
-                await mail_client.check_emails()
-                if mail_client.last_verification_code:
-                    verification_code = mail_client.last_verification_code
-                    break
-                print(f"Checking email... ({i+1}/12)")
-                await asyncio.sleep(5)
 
-            if not verification_code:
-                print("Failed to receive verification code within 60 seconds.")
+def _write_session_sync(session_path: Path, token_value: str | None, cookies: list[dict[str, Any]]) -> None:
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "token": token_value,
+        "cookie": cookies_to_header(cookies),
+    }
+    with session_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+async def save_session(session_path: Path, token_value: str | None, cookies: list[dict[str, Any]]) -> None:
+    await asyncio.to_thread(_write_session_sync, session_path, token_value, cookies)
+    logger.info("Session saved to: %s", session_path)
+
+
+class TraeRegistrar:
+    def __init__(self, settings: Settings, accounts_lock: asyncio.Lock) -> None:
+        self.settings = settings
+        self.accounts_lock = accounts_lock
+        self._token_response_text: str | None = None
+
+    async def _handle_response(self, response: Response) -> None:
+        url = response.url
+        
+        if "trae.ai" in url:
+            logger.debug(f"API call detected: {url}")
+        
+        if "GetUserToken" in url and not self._token_response_text:
+            try:
+                self._token_response_text = await response.text()
+                logger.info(f"✓ Captured GetUserToken response from: {url}")
+                token = extract_token(self._token_response_text)
+                if token:
+                    logger.info(f"✓ Successfully extracted token (length: {len(token)})")
+                else:
+                    logger.warning("✗ GetUserToken response captured but token extraction failed")
+                    logger.debug(f"Response content: {self._token_response_text[:500]}...")
+            except Exception as e:
+                logger.error(f"Failed to read token response: {e}", exc_info=True)
+
+    @staticmethod
+    async def _wait_for_verification_code(
+        mail_client: AsyncMailClient,
+        *,
+        timeout_s: int,
+        poll_interval_s: int,
+    ) -> str | None:
+        deadline = asyncio.get_running_loop().time() + timeout_s
+        attempt = 0
+        while asyncio.get_running_loop().time() < deadline:
+            attempt += 1
+            await mail_client.check_emails()
+            if mail_client.last_verification_code:
+                return mail_client.last_verification_code
+            logger.info("Checking email... (attempt %d)", attempt)
+            await asyncio.sleep(poll_interval_s)
+        return None
+
+    async def _claim_gift(self, page: Page) -> None:
+        logger.info("Checking for anniversary gift...")
+        try:
+            await page.goto(self.settings.gift_url)
+            await page.wait_for_load_state("networkidle")
+
+            claim_btn = page.get_by_role("button", name=re.compile("claim", re.IGNORECASE))
+            if await claim_btn.count() <= 0:
+                logger.info("Claim button not found.")
                 return
 
-            # Fill Code & Password
-            print(f"Entering verification code: {verification_code}")
-            await page.get_by_role("textbox", name="Verification code").fill(verification_code)
-            await page.get_by_role("textbox", name="Password").fill(password)
+            btn_text = (await claim_btn.first.inner_text()).strip()
+            if "claimed" in btn_text.lower():
+                logger.info("Gift status: Already claimed")
+                return
 
-            # Click Sign Up
-            signup_btns = page.get_by_text("Sign Up")
-            if await signup_btns.count() > 1:
-                await signup_btns.nth(1).click()
+            logger.info("Clicking claim button: %s", btn_text)
+            await claim_btn.first.click()
+            try:
+                await page.wait_for_function(
+                    "btn => btn && btn.innerText && btn.innerText.toLowerCase().includes('claimed')",
+                    arg=await claim_btn.first.element_handle(),
+                    timeout=10_000,
+                )
+                logger.info("Gift claimed successfully!")
+            except Exception:
+                logger.warning("Clicked claim, but status didn't update to 'Claimed'.")
+        except Exception as e:
+            logger.warning("Error checking gift: %s", e)
+
+    async def _sign_up(self, page: Page, mail_client: AsyncMailClient, email: str, password: str) -> None:
+        logger.info("Navigating to sign-up page...")
+        await page.goto(self.settings.signup_url)
+        await page.wait_for_load_state("networkidle")
+
+        logger.info("Filling email: %s", email)
+        email_input = page.get_by_role("textbox", name="Email")
+        await email_input.wait_for(state="visible", timeout=10_000)
+        await email_input.fill(email)
+        
+        logger.info("Clicking send code button...")
+        send_code_btn = page.get_by_text("Send Code")
+        await send_code_btn.click()
+        logger.info("Verification code sent, waiting for email...")
+
+        verification_code = await self._wait_for_verification_code(
+            mail_client,
+            timeout_s=self.settings.email_wait_timeout_s,
+            poll_interval_s=self.settings.email_poll_interval_s,
+        )
+        if not verification_code:
+            raise RuntimeError(
+                f"Failed to receive verification code within {self.settings.email_wait_timeout_s} seconds."
+            )
+
+        logger.info("Entering verification code")
+        code_input = page.get_by_role("textbox", name="Verification code")
+        await code_input.wait_for(state="visible", timeout=10_000)
+        await code_input.fill(verification_code)
+        
+        logger.info("Entering password")
+        password_input = page.get_by_role("textbox", name="Password")
+        await password_input.wait_for(state="visible", timeout=10_000)
+        await password_input.fill(password)
+
+        logger.info("Submitting registration...")
+        signup_btns = page.get_by_text("Sign Up")
+        btn_count = await signup_btns.count()
+        
+        if btn_count > 1:
+            await signup_btns.nth(1).click()
+        elif btn_count == 1:
+            await signup_btns.click()
+        else:
+            await page.screenshot(path="debug_no_signup_btn.png")
+            raise RuntimeError("Could not find 'Sign Up' button")
+        
+        try:
+            await page.wait_for_url(
+                lambda url: "/sign-up" not in url, timeout=self.settings.navigation_timeout_ms
+            )
+            logger.info("Registration successful (page redirected)")
+        except Exception:
+            err_locator = page.locator(".error-message").first
+            if await err_locator.count() > 0:
+                err = (await err_locator.inner_text()).strip()
+                raise RuntimeError(f"Registration failed: {err}") from None
+            
+            current_url = page.url
+            if "/sign-up" in current_url:
+                logger.warning("Still on sign-up page after timeout - button click may have failed")
+                await page.screenshot(path="debug_after_submit.png")
             else:
-                await signup_btns.click()
-            
-            print("Submitting registration...")
+                logger.info("Registration appears successful (not on sign-up page)")
 
-            # Verify Success (Check URL change or specific element)
-            try:
-                await page.wait_for_url(lambda url: "/sign-up" not in url, timeout=20000)
-                print("Registration successful (page redirected)")
-            except:
-                # Check for errors
-                if await page.locator(".error-message").count() > 0:
-                    err = await page.locator(".error-message").first.inner_text()
-                    print(f"Registration failed: {err}")
-                    return
-                print("Registration success check timed out, continuing anyway...")
+    async def run_one(self) -> None:
+        logger.info("Starting single account registration process...")
+        self._token_response_text = None
 
-            # Save Account
-            await save_account(email, password)
+        async with AsyncMailClient() as mail_client:
+            email = mail_client.get_email()
+            if not email:
+                raise RuntimeError("Failed to generate email. Please check CUSTOM_DOMAIN.")
 
-            # 4. Claim Gift
-            print("Checking for anniversary gift...")
-            try:
-                await page.goto("https://www.trae.ai/2026-anniversary-gift")
+            password = generate_password(self.settings.password_length)
+
+            async with async_playwright() as p:
+                logger.info("Launching browser (Headless: %s)...", self.settings.headless)
+                browser = await p.chromium.launch(
+                    headless=self.settings.headless,
+                    args=[
+                        "--disable-gpu",
+                        "--disable-dev-shm-usage",
+                        "--no-sandbox",
+                        "--disable-software-rasterizer",
+                        "--disable-extensions",
+                    ],
+                )
+                context = await browser.new_context()
+                page = await context.new_page()
+                page.on("response", self._handle_response)
+
+                await self._sign_up(page, mail_client, email, password)
+                await save_account(self.settings.accounts_file, email, password, self.accounts_lock)
+                
+                logger.info("Waiting for GetUserToken API call...")
                 await page.wait_for_load_state("networkidle")
+                await asyncio.sleep(2)
+                
+                if not self._token_response_text:
+                    logger.info("Token not captured yet, trying to trigger GetUserToken...")
+                    try:
+                        await page.goto("https://www.trae.ai/")
+                        await page.wait_for_load_state("networkidle")
+                        await asyncio.sleep(2)
+                    except Exception as e:
+                        logger.debug(f"Failed to navigate to trigger token: {e}")
+                
+                await self._claim_gift(page)
 
-                claim_btn = page.get_by_role("button", name=re.compile("claim", re.IGNORECASE))
-                if await claim_btn.count() > 0:
-                    text = await claim_btn.first.inner_text()
-                    if "claimed" in text.lower():
-                        print("Gift status: Already claimed")
-                    else:
-                        print(f"Clicking claim button: {text}")
-                        await claim_btn.first.click()
-                        # Wait for status update
-                        try:
-                            await page.wait_for_function(
-                                "btn => btn.innerText.toLowerCase().includes('claimed')",
-                                arg=await claim_btn.first.element_handle(),
-                                timeout=10000
-                            )
-                            print("Gift claimed successfully!")
-                        except:
-                            print("Clicked claim, but status didn't update to 'Claimed'.")
+                cookies = await context.cookies()
+                token_value = extract_token(self._token_response_text)
+                
+                if token_value:
+                    logger.info(f"✓ Token will be saved (length: {len(token_value)})")
                 else:
-                    print("Claim button not found.")
-            except Exception as e:
-                print(f"Error checking gift: {e}")
+                    logger.warning("✗ No token captured - session will be saved without token")
+                
+                cookies_list = [dict(c) for c in cookies]
+                session_path = self.settings.cookies_dir / f"{_safe_filename(email)}.json"
+                await save_session(session_path, token_value, cookies_list)
 
-            # 5. Save Cookies
-            cookies = await context.cookies()
-            cookie_path = os.path.join(COOKIES_DIR, f"{email}.json")
-            with open(cookie_path, "w", encoding="utf-8") as f:
-                json.dump(cookies, f)
-            print(f"Browser cookies saved to: {cookie_path}")
-            
-            # Wait a bit before closing to ensure everything settles
-            await asyncio.sleep(2)
+                await asyncio.sleep(2)
 
-    except Exception as e:
-        print(f"An error occurred: {e}")
-    finally:
-        if mail_client:
-            await mail_client.close()
-        # Browser closes automatically with context manager
+                await context.close()
+                await browser.close()
 
-async def run_batch(total, concurrency):
-    """Run batch registration with specified concurrency."""
+
+async def run_batch(total: int, concurrency: int, settings: Settings) -> None:
     if total <= 0:
-        print("Batch size must be greater than 0.")
-        return
+        raise ValueError("Batch size must be greater than 0.")
     if concurrency <= 0:
-        print("Concurrency must be greater than 0.")
-        return
-    concurrency = min(concurrency, total)
-    print(f"Starting batch registration. Total: {total}, Concurrency: {concurrency}")
+        raise ValueError("Concurrency must be greater than 0.")
 
-    queue = asyncio.Queue()
+    concurrency = min(concurrency, total)
+    logger.info("Starting batch registration. Total: %d, Concurrency: %d", total, concurrency)
+
+    accounts_lock = asyncio.Lock()
+    queue: asyncio.Queue[int | None] = asyncio.Queue()
     for i in range(1, total + 1):
         queue.put_nowait(i)
     for _ in range(concurrency):
         queue.put_nowait(None)
 
-    async def worker(worker_id):
+    async def worker(worker_id: int) -> None:
         while True:
             index = await queue.get()
-            if index is None:
-                queue.task_done()
-                return
-            print(f"[Worker {worker_id}] Starting account {index}/{total}...")
             try:
-                await run_registration()
+                if index is None:
+                    return
+                logger.info("[Worker %d] Starting account %d/%d...", worker_id, index, total)
+                registrar = TraeRegistrar(settings, accounts_lock)
+                await registrar.run_one()
+                logger.info("[Worker %d] Finished account %d/%d.", worker_id, index, total)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("[Worker %d] Account %s failed.", worker_id, index)
             finally:
-                print(f"[Worker {worker_id}] Finished account {index}/{total}.")
                 queue.task_done()
 
     tasks = [asyncio.create_task(worker(i + 1)) for i in range(concurrency)]
     await queue.join()
     await asyncio.gather(*tasks)
 
-if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "install-browsers":
-        print("Installing Playwright browsers...")
-        import subprocess
-        try:
-            # We need to install the browser binary
-            # This is tricky in a frozen environment because 'playwright' module path is different
-            # But we can try to use the python -m playwright install command if python is available
-            # Or use the internal playwright driver if we can access it
-            
-            # Simple fallback: Try to run `playwright install chromium` assuming it's in path or accessible
-            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
-            print("Browsers installed successfully.")
-        except Exception as e:
-            print(f"Failed to install browsers: {e}")
-            print("Please try running: 'uv run playwright install chromium' or 'pip install playwright && playwright install chromium'")
-        sys.exit(0)
 
-    total = 1
-    concurrency = 1
-    if len(sys.argv) > 1:
-        try:
-            total = int(sys.argv[1])
-        except ValueError:
-            print("Error: Please provide total number of accounts (integer).")
-            sys.exit(1)
-    if len(sys.argv) > 2:
-        try:
-            concurrency = int(sys.argv[2])
-        except ValueError:
-            print("Error: Please provide concurrency level (integer).")
-            sys.exit(1)
-    
+def install_playwright_browsers(browser_name: str) -> int:
+    logger.info("Installing Playwright browsers (%s)...", browser_name)
     try:
-        asyncio.run(run_batch(total, concurrency))
+        subprocess.run([sys.executable, "-m", "playwright", "install", browser_name], check=True)
+        logger.info("Browsers installed successfully.")
+        return 0
+    except Exception as e:
+        logger.error("Failed to install browsers: %s", e)
+        logger.error("Try: uv run playwright install %s", browser_name)
+        return 1
+
+
+def _parse_args(argv: list[str]) -> tuple[str, argparse.Namespace]:
+    if argv and argv[0].strip().lower() == "install-browsers":
+        parser = argparse.ArgumentParser(prog=f"{Path(sys.argv[0]).name} install-browsers")
+        parser.add_argument("browser", nargs="?", default="chromium")
+        return "install-browsers", parser.parse_args(argv[1:])
+
+    parser = argparse.ArgumentParser(prog=Path(sys.argv[0]).name)
+    parser.add_argument("total", nargs="?", type=int, default=1)
+    parser.add_argument("concurrency", nargs="?", type=int, default=1)
+    return "run", parser.parse_args(argv)
+
+
+def main(argv: list[str]) -> int:
+    mode, args = _parse_args(argv)
+    if mode == "install-browsers":
+        return install_playwright_browsers(args.browser)
+
+    settings = Settings.load()
+    try:
+        asyncio.run(run_batch(args.total, args.concurrency, settings))
+        return 0
     except KeyboardInterrupt:
-        print("\nProcess interrupted by user.")
+        logger.info("Process interrupted by user.")
+        return 130
+    except Exception as e:
+        logger.error("%s", e)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

@@ -1,4 +1,4 @@
-# Rule: Trae Account Creator Guidelines
+# Agent Guidelines: Trae Account Creator
 
 You are an expert Python developer specializing in automation and browser testing.
 

@@ -40,12 +40,15 @@ jobs:
     - name: Build executable
       shell: bash
       run: |
-        # Use pyinstaller with spec file or options
-        # We need to make sure playwright browsers are handled correctly
-        # The simplest way is to tell users to run 'playwright install'
-        # But we can also set PLAYWRIGHT_BROWSERS_PATH to a local folder next to the exe
+        # Use spec file for optimized build
+        uv run pyinstaller register.spec
         
-        uv run pyinstaller --onefile --name TraeAccountCreator-${{ runner.os }} --hidden-import=playwright --hidden-import=playwright.async_api --hidden-import=imaplib --hidden-import=email --hidden-import=python-dotenv --add-data ".env.example:." register.py
+        # Rename output to include OS name
+        if [ "${{ runner.os }}" == "Windows" ]; then
+          mv dist/TraeAccountCreator.exe dist/TraeAccountCreator-${{ runner.os }}.exe
+        else
+          mv dist/TraeAccountCreator dist/TraeAccountCreator-${{ runner.os }}
+        fi
 
     - name: Prepare Release Bundle
       shell: bash
