@@ -440,14 +440,31 @@ class TraeRegistrar:
                 await page.wait_for_load_state("networkidle")
                 await asyncio.sleep(2)
                 
-                if not self._token_response_text:
-                    logger.info("Token not captured yet, trying to trigger GetUserToken...")
+                # Retry logic: refresh page up to 3 times if token not captured
+                max_retries = 3
+                retry_count = 0
+                
+                while not self._token_response_text and retry_count < max_retries:
+                    retry_count += 1
+                    logger.warning(f"Token not captured yet, refreshing page (attempt {retry_count}/{max_retries})...")
                     try:
-                        await page.goto("https://www.trae.ai/")
+                        # Re-register the response handler to ensure it's active after refresh
+                        page.remove_listener("response", self._handle_response)
+                        page.on("response", self._handle_response)
+                        
+                        await page.reload()
                         await page.wait_for_load_state("networkidle")
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(3)
+                        
+                        if self._token_response_text:
+                            logger.info(f"✓ Token captured after refresh (attempt {retry_count})")
+                            break
                     except Exception as e:
-                        logger.debug(f"Failed to navigate to trigger token: {e}")
+                        logger.warning(f"Failed to refresh page (attempt {retry_count}): {e}")
+                
+                if not self._token_response_text:
+                    logger.error("✗ Failed to capture token after all retries")
+                    raise RuntimeError("JWT token is required but could not be captured after multiple attempts")
                 
                 await self._claim_gift(page)
 
@@ -541,11 +558,67 @@ def install_playwright_browsers(browser_name: str) -> int:
         return 1
 
 
+def merge_accounts_command(accounts_dir: Path, output_file: Path) -> int:
+    """Merge all account JSON files into a single list"""
+    try:
+        if not accounts_dir.exists():
+            logger.error(f"Directory '{accounts_dir}' not found")
+            return 1
+        
+        all_accounts = []
+        json_files = list(accounts_dir.glob("*.json"))
+        
+        if not json_files:
+            logger.warning(f"No JSON files found in '{accounts_dir}'")
+            return 0
+        
+        logger.info(f"Found {len(json_files)} account file(s)")
+        
+        for json_file in sorted(json_files):
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    
+                    # Handle both list and single object formats
+                    if isinstance(data, list):
+                        all_accounts.extend(data)
+                        logger.info(f"  ✓ {json_file.name}: {len(data)} account(s)")
+                    elif isinstance(data, dict):
+                        all_accounts.append(data)
+                        logger.info(f"  ✓ {json_file.name}: 1 account")
+                    else:
+                        logger.warning(f"  ⚠️  {json_file.name}: Unexpected format, skipped")
+                        
+            except json.JSONDecodeError as e:
+                logger.error(f"  ✗ {json_file.name}: Invalid JSON - {e}")
+            except Exception as e:
+                logger.error(f"  ✗ {json_file.name}: Error - {e}")
+        
+        # Write merged accounts to output file
+        if all_accounts:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(all_accounts, f, indent=2, ensure_ascii=False)
+            logger.info(f"✅ Merged {len(all_accounts)} account(s) → {output_file}")
+            return 0
+        else:
+            logger.warning("No accounts to merge")
+            return 0
+            
+    except Exception as e:
+        logger.error(f"Failed to merge accounts: {e}")
+        return 1
+
+
 def _parse_args(argv: list[str]) -> tuple[str, argparse.Namespace]:
     if argv and argv[0].strip().lower() == "install-browsers":
         parser = argparse.ArgumentParser(prog=f"{Path(sys.argv[0]).name} install-browsers")
         parser.add_argument("browser", nargs="?", default="chromium")
         return "install-browsers", parser.parse_args(argv[1:])
+    
+    if argv and argv[0].strip().lower() == "merge-accounts":
+        parser = argparse.ArgumentParser(prog=f"{Path(sys.argv[0]).name} merge-accounts")
+        parser.add_argument("--output", default="accounts_merged.json", help="Output file path")
+        return "merge-accounts", parser.parse_args(argv[1:])
 
     parser = argparse.ArgumentParser(prog=Path(sys.argv[0]).name)
     parser.add_argument("total", nargs="?", type=int, default=1)
@@ -555,8 +628,14 @@ def _parse_args(argv: list[str]) -> tuple[str, argparse.Namespace]:
 
 def main(argv: list[str]) -> int:
     mode, args = _parse_args(argv)
+    
     if mode == "install-browsers":
         return install_playwright_browsers(args.browser)
+    
+    if mode == "merge-accounts":
+        settings = Settings.load()
+        output_path = settings.base_dir / args.output
+        return merge_accounts_command(settings.accounts_dir, output_path)
 
     settings = Settings.load()
     try:
