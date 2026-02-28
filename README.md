@@ -11,9 +11,11 @@ pip install uv
 # Install dependencies
 uv sync
 
-# Install browser
+# Install Chromium browser only (lightweight)
 uv run playwright install chromium
 ```
+
+> **Note**: We only install Chromium to keep the installation lightweight (~150MB vs ~300MB for all browsers).
 
 ## Configuration
 
@@ -54,11 +56,25 @@ uv run register.py 10 2
 
 ## Account Management
 
-After registration, the tool saves session tokens and cookies in the `cookies/` directory as JSON files. You can use these credentials with [Trae-Account-Manager](https://github.com/Yang-505/Trae-Account-Manager) to manage and use your accounts.
+After registration, account data is saved in the `accounts/` directory. Each account is stored as a separate JSON file named after the email address.
 
-Each session file contains:
-- `token`: Authentication token for API access
-- `cookie`: Session cookie string for browser access
+### File Structure
+```
+accounts/
+├── user123_example_com.json
+├── user456_example_com.json
+└── test_domain_com.json
+```
+
+### Import to Trae Account Manager
+
+1. Open [Trae-Account-Manager](https://github.com/Yang-505/Trae-Account-Manager)
+2. Navigate to **Settings** page
+3. Click **Import Data** button
+4. Select JSON files from the `accounts/` folder
+5. All account information will be imported automatically
+
+You can import individual files or select multiple files at once for batch import.
 
 ## License
 

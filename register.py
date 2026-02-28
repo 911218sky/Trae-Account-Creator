@@ -48,6 +48,7 @@ JWT_RE = re.compile(r"eyJ[\w-]+\.[\w-]+\.[\w-]+")
 class Settings:
     base_dir: Path
     cookies_dir: Path
+    accounts_dir: Path
     accounts_file: Path
     headless: bool
     password_length: int
@@ -67,9 +68,14 @@ class Settings:
         
         cookies_dir = base_dir / "cookies"
         cookies_dir.mkdir(parents=True, exist_ok=True)
+        
+        accounts_dir = base_dir / "accounts"
+        accounts_dir.mkdir(parents=True, exist_ok=True)
+        
         return Settings(
             base_dir=base_dir,
             cookies_dir=cookies_dir,
+            accounts_dir=accounts_dir,
             accounts_file=base_dir / "accounts.txt",
             headless=env_bool("HEADLESS", False),
             password_length=max(8, env_int("PASSWORD_LENGTH", 12)),
@@ -159,13 +165,116 @@ async def save_session(session_path: Path, token_value: str | None, cookies: lis
     logger.info("Session saved to: %s", session_path)
 
 
+def _write_account_data_sync(
+    accounts_dir: Path,
+    email: str,
+    token_value: str | None,
+    cookies: list[dict[str, Any]],
+    user_info: dict[str, Any] | None = None,
+    plan_type: str = "Free"
+) -> None:
+    """Save account data as individual JSON file in array format"""
+    import uuid
+    
+    accounts_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Use email as filename (sanitized)
+    safe_email = _safe_filename(email)
+    account_file = accounts_dir / f"{safe_email}.json"
+    
+    # Generate account ID
+    account_id = str(uuid.uuid4())
+    
+    # Extract username from email or user_info
+    if user_info and user_info.get("ScreenName"):
+        username = user_info["ScreenName"]
+    else:
+        username = email.split("@")[0] if "@" in email else email
+    
+    # Extract user info from API response
+    avatar_url = ""
+    user_id = ""
+    tenant_id = ""
+    region = ""
+    
+    if user_info:
+        avatar_url = user_info.get("AvatarUrl", "")
+        user_id = user_info.get("UserID", "")
+        tenant_id = user_info.get("TenantID", "")
+        region = user_info.get("Region", "")
+    
+    # Create account entry
+    account_entry = {
+        "avatar_url": avatar_url,
+        "cookies": cookies_to_header(cookies),
+        "email": email,
+        "jwt_token": token_value or "",
+        "machine_id": account_id,
+        "name": username,
+        "plan_type": plan_type,
+        "region": region,
+        "tenant_id": tenant_id,
+        "user_id": user_id
+    }
+    
+    # Save as array with single item
+    with account_file.open("w", encoding="utf-8") as f:
+        json.dump([account_entry], f, ensure_ascii=False, indent=2)
+
+
+async def save_account_data(
+    accounts_dir: Path,
+    email: str,
+    token_value: str | None,
+    cookies: list[dict[str, Any]],
+    user_info: dict[str, Any] | None = None,
+    plan_type: str = "Free"
+) -> None:
+    """Save account data as individual file"""
+    await asyncio.to_thread(_write_account_data_sync, accounts_dir, email, token_value, cookies, user_info, plan_type)
+    safe_email = _safe_filename(email)
+    logger.info("Account data saved to: %s/%s.json", accounts_dir, safe_email)
+
+
 class TraeRegistrar:
     def __init__(self, settings: Settings, accounts_lock: asyncio.Lock) -> None:
         self.settings = settings
         self.accounts_lock = accounts_lock
         self._token_response_text: str | None = None
+        self._user_info_response_text: str | None = None
 
     async def _handle_response(self, response: Response) -> None:
+        url = response.url
+        
+        if "trae.ai" in url:
+            logger.debug(f"API call detected: {url}")
+        
+        if "GetUserToken" in url and not self._token_response_text:
+            try:
+                self._token_response_text = await response.text()
+                logger.info(f"✓ Captured GetUserToken response from: {url}")
+                token = extract_token(self._token_response_text)
+                if token:
+                    logger.info(f"✓ Successfully extracted token (length: {len(token)})")
+                else:
+                    logger.warning("✗ GetUserToken response captured but token extraction failed")
+                    logger.debug(f"Response content: {self._token_response_text[:500]}...")
+            except Exception as e:
+                logger.error(f"Failed to read token response: {e}", exc_info=True)
+        
+        if "GetUserInfo" in url and not self._user_info_response_text:
+            try:
+                self._user_info_response_text = await response.text()
+                logger.info(f"✓ Captured GetUserInfo response from: {url}")
+                try:
+                    data = json.loads(self._user_info_response_text)
+                    result = data.get("Result", {})
+                    screen_name = result.get("ScreenName", "Unknown")
+                    logger.info(f"✓ User info: {screen_name}")
+                except Exception:
+                    logger.debug("Could not parse GetUserInfo response")
+            except Exception as e:
+                logger.error(f"Failed to read user info response: {e}", exc_info=True)
         url = response.url
         
         if "trae.ai" in url:
@@ -327,7 +436,7 @@ class TraeRegistrar:
                 await self._sign_up(page, mail_client, email, password)
                 await save_account(self.settings.accounts_file, email, password, self.accounts_lock)
                 
-                logger.info("Waiting for GetUserToken API call...")
+                logger.info("Waiting for GetUserToken and GetUserInfo API calls...")
                 await page.wait_for_load_state("networkidle")
                 await asyncio.sleep(2)
                 
@@ -351,8 +460,30 @@ class TraeRegistrar:
                     logger.warning("✗ No token captured - session will be saved without token")
                 
                 cookies_list = [dict(c) for c in cookies]
+                
+                # Parse user info from captured response
+                user_info = None
+                if self._user_info_response_text:
+                    try:
+                        data = json.loads(self._user_info_response_text)
+                        user_info = data.get("Result", {})
+                        logger.info("✓ User info parsed successfully")
+                    except Exception as e:
+                        logger.warning(f"Failed to parse user info: {e}")
+                
+                # Save in old format (cookies folder)
                 session_path = self.settings.cookies_dir / f"{_safe_filename(email)}.json"
                 await save_session(session_path, token_value, cookies_list)
+                
+                # Save in new format (accounts folder) with user info
+                await save_account_data(
+                    self.settings.accounts_dir,
+                    email,
+                    token_value,
+                    cookies_list,
+                    user_info=user_info,
+                    plan_type="Free"
+                )
 
                 await asyncio.sleep(2)
 
