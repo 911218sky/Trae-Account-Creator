@@ -3,23 +3,21 @@
 block_cipher = None
 
 # Exclude unnecessary modules to reduce size
+# Removed PIL from excludes as it is used by gui.py
 excludes = [
-    # GUI frameworks
-    'tkinter', 'PyQt5', 'PyQt6', 'PySide2', 'PySide6', 'wx',
-    # Scientific libraries
-    'numpy', 'scipy', 'pandas', 'matplotlib', 'PIL', 'cv2',
-    # Development tools
+    'PyQt5', 'PyQt6', 'PySide2', 'PySide6', 'wx',
+    'numpy', 'scipy', 'pandas', 'matplotlib', 'cv2',
     'pytest', 'unittest', 'doctest', 'pdb', 'IPython',
-    # Other unused modules
     'sqlite3', 'xml', 'xmlrpc', 'pydoc', 'difflib',
 ]
 
 a = Analysis(
-    ['register.py'],
+    ['gui.py'],
     pathex=[],
     binaries=[],
     datas=[
         ('src', 'src'),  # Include src package
+        ('assets', 'assets'),  # Include assets
     ],
     hiddenimports=[
         'src',
@@ -30,6 +28,9 @@ a = Analysis(
         'src.exceptions',
         'src.constants',
         'src.logger',
+        'PIL',
+        'PIL._tkinter_finder',
+        'ttkbootstrap',
     ],
     hookspath=[],
     hooksconfig={},
@@ -57,10 +58,11 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='assets/app.ico',
 )

@@ -30,8 +30,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        uv sync
-        uv pip install pyinstaller
+        uv sync --dev
 
     - name: Install Playwright browsers
       run: |
@@ -91,7 +90,11 @@ jobs:
         
         # 1. Full/Portable Version (with browsers)
         if [ "${{ runner.os }}" == "Windows" ]; then
-          7z a ../TraeAccountCreator-${{ runner.os }}-Portable.zip TraeAccountCreator-${{ runner.os }}
+          if command -v 7z >/dev/null 2>&1; then
+            7z a ../TraeAccountCreator-${{ runner.os }}-Portable.zip TraeAccountCreator-${{ runner.os }}
+          else
+            powershell -Command "Compress-Archive -Path 'TraeAccountCreator-${{ runner.os }}' -DestinationPath '../TraeAccountCreator-${{ runner.os }}-Portable.zip'"
+          fi
           echo "ARCHIVE_PORTABLE=TraeAccountCreator-${{ runner.os }}-Portable.zip" >> $GITHUB_ENV
         else
           tar -czf ../TraeAccountCreator-${{ runner.os }}-Portable.tar.gz TraeAccountCreator-${{ runner.os }}
@@ -103,7 +106,11 @@ jobs:
         rm -rf TraeAccountCreator-${{ runner.os }}/browsers
         
         if [ "${{ runner.os }}" == "Windows" ]; then
-          7z a ../TraeAccountCreator-${{ runner.os }}-Lite.zip TraeAccountCreator-${{ runner.os }}
+          if command -v 7z >/dev/null 2>&1; then
+            7z a ../TraeAccountCreator-${{ runner.os }}-Lite.zip TraeAccountCreator-${{ runner.os }}
+          else
+            powershell -Command "Compress-Archive -Path 'TraeAccountCreator-${{ runner.os }}' -DestinationPath '../TraeAccountCreator-${{ runner.os }}-Lite.zip'"
+          fi
           echo "ARCHIVE_LITE=TraeAccountCreator-${{ runner.os }}-Lite.zip" >> $GITHUB_ENV
         else
           tar -czf ../TraeAccountCreator-${{ runner.os }}-Lite.tar.gz TraeAccountCreator-${{ runner.os }}

@@ -8,6 +8,7 @@ dependencies = [
     "httpx",
     "playwright",
     "python-dotenv",
+    "ttkbootstrap>=1.10.1",
 ]
 
 [tool.uv]

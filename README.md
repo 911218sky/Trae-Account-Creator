@@ -1,5 +1,10 @@
 # Trae Account Creator
 
+<div align="center">
+  <img src="assets/app.png" alt="App Icon" width="128" />
+  <br />
+</div>
+
 Automated Trae account registration tool using custom domain and Gmail IMAP for email verification.
 
 ## Installation
@@ -11,11 +16,11 @@ pip install uv
 # Install dependencies
 uv sync
 
-# Install Chromium browser only (lightweight)
-uv run playwright install chromium
+# Install Chromium browser into local ./browsers directory
+uv run python register.py install-browsers chromium
 ```
 
-> **Note**: We only install Chromium to keep the installation lightweight (~150MB vs ~300MB for all browsers).
+> Note: Browsers are installed into the project-local browsers/ directory and are ignored by Git.
 
 ## Configuration
 
@@ -60,6 +65,15 @@ uv run register.py merge-accounts
 uv run register.py merge-accounts --output my_accounts.json
 ```
 
+### GUI
+
+```bash
+# Launch the desktop GUI
+uv run python gui.py
+```
+
+The GUI provides single/batch registration, browser installation to the local directory, account merging, live logs, and progress display.
+
 For the compiled `.exe` version:
 ```bash
 # Register accounts
@@ -101,6 +115,12 @@ uv run python register.py merge-accounts --output my_accounts.json
 By default, the merged file will be named with the current date (e.g., `accounts_merged-2026-02-28.json`), making it easy to track when accounts were merged.
 
 **Note:** The standalone `merge_accounts.py` script is still available for advanced use cases.
+
+### Local Browsers Directory
+
+- Playwright browsers are installed to the project-local `browsers/` directory.
+- The application automatically uses `browsers/` when present.
+- `browsers/` is excluded from Git via `.gitignore` to keep the repository clean.
 
 ### Import to Trae Account Manager
 

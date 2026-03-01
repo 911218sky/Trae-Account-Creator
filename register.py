@@ -11,25 +11,35 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
+ansi_re = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+ctrl_re = re.compile(r"[\x00-\x1F\x7F]")
+
+def _sanitize_output(s: str) -> str:
+    s = ansi_re.sub("", s)
+    s = s.replace("\r", " ").replace("\b", " ")
+    s = ctrl_re.sub(" ", s)
+    return " ".join(s.split())
+
 
 def _configure_playwright_browsers_path() -> None:
-    if not getattr(sys, "frozen", False):
-        return
-
-    base_dir = os.path.dirname(sys.executable)
+    if getattr(sys, "frozen", False):
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
     local_browsers_path = os.path.join(base_dir, "browsers")
     if os.path.exists(local_browsers_path):
         os.environ["PLAYWRIGHT_BROWSERS_PATH"] = local_browsers_path
         print(f"Using local browsers from: {local_browsers_path}")
     else:
-        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
-        print("Using system default browsers")
+        if getattr(sys, "frozen", False):
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
+            print("Using system default browsers")
 
 
 _configure_playwright_browsers_path()
@@ -508,7 +518,7 @@ class TraeRegistrar:
                 await browser.close()
 
 
-async def run_batch(total: int, concurrency: int, settings: Settings) -> None:
+async def run_batch(total: int, concurrency: int, settings: Settings, progress_cb: Optional[Callable[[int, int], None]] = None) -> None:
     if total <= 0:
         raise ValueError("Batch size must be greater than 0.")
     if concurrency <= 0:
@@ -524,7 +534,11 @@ async def run_batch(total: int, concurrency: int, settings: Settings) -> None:
     for _ in range(concurrency):
         queue.put_nowait(None)
 
+    completed = 0
+    progress_lock = asyncio.Lock()
+
     async def worker(worker_id: int) -> None:
+        nonlocal completed
         while True:
             index = await queue.get()
             try:
@@ -540,16 +554,68 @@ async def run_batch(total: int, concurrency: int, settings: Settings) -> None:
                 logger.exception("[Worker %d] Account %s failed.", worker_id, index)
             finally:
                 queue.task_done()
+                if index is not None:
+                    async with progress_lock:
+                        completed += 1
+                        if progress_cb:
+                            try:
+                                progress_cb(completed, total)
+                            except Exception:
+                                pass
 
     tasks = [asyncio.create_task(worker(i + 1)) for i in range(concurrency)]
     await queue.join()
     await asyncio.gather(*tasks)
+    if progress_cb:
+        try:
+            progress_cb(total, total)
+        except Exception:
+            pass
 
 
-def install_playwright_browsers(browser_name: str) -> int:
+def install_playwright_browsers(browser_name: str, progress_cb: Optional[Callable[[int], None]] = None) -> int:
     logger.info("Installing Playwright browsers (%s)...", browser_name)
     try:
-        subprocess.run([sys.executable, "-m", "playwright", "install", browser_name], check=True)
+        base_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
+        local_browsers_path = os.path.join(base_dir, "browsers")
+        os.makedirs(local_browsers_path, exist_ok=True)
+        env = os.environ.copy()
+        env["PLAYWRIGHT_BROWSERS_PATH"] = local_browsers_path
+        if progress_cb:
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "playwright", "install", browser_name],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+            )
+            percent = 0
+            pct_re = re.compile(r"(\d{1,3})%")
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                raw = line.rstrip("\n")
+                m = pct_re.search(raw)
+                if m:
+                    try:
+                        percent = int(m.group(1))
+                        progress_cb(max(0, min(100, percent)))
+                    except Exception:
+                        pass
+                size_m = re.search(r"of\s+([\d\.]+\s+[KMG]iB)", raw)
+                if m:
+                    if size_m:
+                        logger.info(f"Installing browsers: {percent}% of {size_m.group(1)}")
+                    else:
+                        logger.info(f"Installing browsers: {percent}%")
+                else:
+                    clean = _sanitize_output(raw)
+                    if clean:
+                        logger.info(clean)
+            ret = proc.wait()
+            if ret != 0:
+                raise RuntimeError(f"Playwright install exited with code {ret}")
+        else:
+            subprocess.run([sys.executable, "-m", "playwright", "install", browser_name], check=True, env=env)
         logger.info("Browsers installed successfully.")
         return 0
     except Exception as e:
