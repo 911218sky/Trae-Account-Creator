@@ -200,6 +200,7 @@ class App(tb.Window):
         self._setup_logging()
         self.settings = register.Settings.load()
         self.running = False
+        self._progress_max_default = 100
     
     def _apply_styles(self):
         try:
@@ -462,6 +463,17 @@ class App(tb.Window):
             self.progress.stop()
             self.progress.configure(value=0)
 
+    def _progress_update(self, value: int, maximum: int | None = None):
+        def upd():
+            try:
+                if maximum is not None:
+                    self.progress.configure(maximum=maximum, value=value)
+                else:
+                    self.progress.configure(value=value)
+            except Exception:
+                pass
+        self.progress.after(0, upd)
+
 
     def _apply_headless(self):
         os.environ["HEADLESS"] = "1" if self.headless_var.get() else "0"
@@ -474,7 +486,7 @@ class App(tb.Window):
                 def reset():
                     try:
                         self.progress.stop()
-                        self.progress.configure(maximum=100, value=0)
+                        self._progress_update(0, maximum=self._progress_max_default)
                     except Exception:
                         pass
                     self._set_running(False)
@@ -490,9 +502,7 @@ class App(tb.Window):
         def task():
             try:
                 def cb(done, total):
-                    def upd():
-                        self.progress.configure(maximum=total, value=done)
-                    self.progress.after(0, upd)
+                    self._progress_update(done, maximum=total)
                 asyncio.run(register.run_batch(1, 1, self.settings, progress_cb=cb))
             except Exception as e:
                 messagebox.showerror("Error", str(e))
@@ -508,9 +518,7 @@ class App(tb.Window):
         def task():
             try:
                 def cb(done, total_):
-                    def upd():
-                        self.progress.configure(maximum=total_, value=done)
-                    self.progress.after(0, upd)
+                    self._progress_update(done, maximum=total_)
                 asyncio.run(register.run_batch(total, conc, self.settings, progress_cb=cb))
             except Exception as e:
                 messagebox.showerror("Error", str(e))
@@ -523,9 +531,7 @@ class App(tb.Window):
         def task():
             try:
                 def pcb(pct):
-                    def upd():
-                        self.progress.configure(maximum=100, value=max(0, min(100, pct)))
-                    self.progress.after(0, upd)
+                    self._progress_update(max(0, min(100, pct)), maximum=100)
                 register.install_playwright_browsers("chromium", progress_cb=pcb)
             except Exception as e:
                 messagebox.showerror("Error", str(e))

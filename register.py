@@ -285,23 +285,6 @@ class TraeRegistrar:
                     logger.debug("Could not parse GetUserInfo response")
             except Exception as e:
                 logger.error(f"Failed to read user info response: {e}", exc_info=True)
-        url = response.url
-        
-        if "trae.ai" in url:
-            logger.debug(f"API call detected: {url}")
-        
-        if "GetUserToken" in url and not self._token_response_text:
-            try:
-                self._token_response_text = await response.text()
-                logger.info(f"✓ Captured GetUserToken response from: {url}")
-                token = extract_token(self._token_response_text)
-                if token:
-                    logger.info(f"✓ Successfully extracted token (length: {len(token)})")
-                else:
-                    logger.warning("✗ GetUserToken response captured but token extraction failed")
-                    logger.debug(f"Response content: {self._token_response_text[:500]}...")
-            except Exception as e:
-                logger.error(f"Failed to read token response: {e}", exc_info=True)
 
     @staticmethod
     async def _wait_for_verification_code(
