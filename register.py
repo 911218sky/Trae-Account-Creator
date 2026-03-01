@@ -581,9 +581,18 @@ def install_playwright_browsers(browser_name: str, progress_cb: Optional[Callabl
         os.makedirs(local_browsers_path, exist_ok=True)
         env = os.environ.copy()
         env["PLAYWRIGHT_BROWSERS_PATH"] = local_browsers_path
+        
+        # Determine command to run
+        if getattr(sys, "frozen", False):
+            # In frozen mode, call our internal command
+            cmd = [sys.executable, "_install_browsers_internal", browser_name]
+        else:
+            # In dev mode, use standard playwright module
+            cmd = [sys.executable, "-m", "playwright", "install", browser_name]
+            
         if progress_cb:
             proc = subprocess.Popen(
-                [sys.executable, "-m", "playwright", "install", browser_name],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -615,7 +624,7 @@ def install_playwright_browsers(browser_name: str, progress_cb: Optional[Callabl
             if ret != 0:
                 raise RuntimeError(f"Playwright install exited with code {ret}")
         else:
-            subprocess.run([sys.executable, "-m", "playwright", "install", browser_name], check=True, env=env)
+            subprocess.run(cmd, check=True, env=env)
         logger.info("Browsers installed successfully.")
         return 0
     except Exception as e:
@@ -681,6 +690,11 @@ def _parse_args(argv: list[str]) -> tuple[str, argparse.Namespace]:
         parser.add_argument("browser", nargs="?", default="chromium")
         return "install-browsers", parser.parse_args(argv[1:])
     
+    if argv and argv[0].strip().lower() == "_install_browsers_internal":
+        parser = argparse.ArgumentParser(prog=f"{Path(sys.argv[0]).name} _install_browsers_internal")
+        parser.add_argument("browser", nargs="?", default="chromium")
+        return "_install_browsers_internal", parser.parse_args(argv[1:])
+    
     if argv and argv[0].strip().lower() == "merge-accounts":
         from datetime import datetime
         default_output = f"accounts_merged-{datetime.now().strftime('%Y-%m-%d')}.json"
@@ -699,6 +713,15 @@ def main(argv: list[str]) -> int:
     
     if mode == "install-browsers":
         return install_playwright_browsers(args.browser)
+    
+    if mode == "_install_browsers_internal":
+        from playwright.__main__ import main as pw_main
+        sys.argv = [sys.argv[0], "install", args.browser]
+        try:
+            pw_main()
+            return 0
+        except SystemExit as e:
+            return e.code
     
     if mode == "merge-accounts":
         settings = Settings.load()

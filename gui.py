@@ -1,6 +1,5 @@
 import sys
 import asyncio
-import json
 import os
 import threading
 import time
@@ -550,6 +549,12 @@ class App(tb.Window):
 
 
 def main():
+    if len(sys.argv) > 1:
+        # If there are command line arguments, pass them to register.main
+        # This handles the internal browser installation in frozen mode
+        import register
+        sys.exit(register.main(sys.argv[1:]))
+    
     app = App()
     app.mainloop()
 
