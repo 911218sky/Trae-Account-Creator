@@ -11,6 +11,7 @@ from tkinter import font as tkfont
 from PIL import Image, ImageDraw
 import logging
 from pathlib import Path
+from dataclasses import replace
 
 from dotenv import load_dotenv
 
@@ -196,9 +197,9 @@ class App(tb.Window):
         self.logger = logging.getLogger("register")
         self._set_icon()
         self._apply_styles()
+        self.settings = register.Settings.load()
         self._setup_ui()
         self._setup_logging()
-        self.settings = register.Settings.load()
         self.running = False
         self._progress_max_default = 100
     
@@ -367,7 +368,7 @@ class App(tb.Window):
         self.conc_var = tk.IntVar(value=1)
         ttk.Spinbox(config_frame, textvariable=self.conc_var, from_=1, to=50, width=15).grid(row=1, column=1, sticky="e", pady=(0, 5))
         
-        self.headless_var = tk.BooleanVar(value=os.getenv("HEADLESS", "false").lower() in {"1", "true", "yes", "y", "on"})
+        self.headless_var = tk.BooleanVar(value=self.settings.headless)
         ttk.Checkbutton(config_frame, text="Headless Mode (Background)", variable=self.headless_var, style="TCheckbutton").grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
 
         # Actions Card
@@ -476,7 +477,10 @@ class App(tb.Window):
 
 
     def _apply_headless(self):
-        os.environ["HEADLESS"] = "1" if self.headless_var.get() else "0"
+        val = bool(self.headless_var.get())
+        # Keep env for CLI parity, but use an in-memory override for this run
+        os.environ["HEADLESS"] = "1" if val else "0"
+        self.settings = replace(self.settings, headless=val)
 
     def _run_thread(self, target):
         def wrapper():

@@ -148,8 +148,7 @@ class TraeRegistrar:
         self.settings = settings
         self.accounts_lock = accounts_lock
         self._token_response_text: str | None = None
-        self._user_info_response_text: str | None = None
-
+    
     async def _handle_response(self, response: Response) -> None:
         url = response.url
         
@@ -262,6 +261,77 @@ class TraeRegistrar:
             else:
                 logger.info("Registration appears successful (not on sign-up page)")
 
+    async def _open_page(self):
+        async with async_playwright() as p:
+            logger.info("Launching browser (Headless: %s)...", self.settings.headless)
+            browser = await p.chromium.launch(
+                headless=self.settings.headless,
+                args=[
+                    "--disable-gpu",
+                    "--disable-dev-shm-usage",
+                    "--no-sandbox",
+                    "--disable-software-rasterizer",
+                    "--disable-extensions",
+                ],
+            )
+            context = await browser.new_context()
+            page = await context.new_page()
+            page.on("response", self._handle_response)
+            try:
+                yield page
+            finally:
+                await context.close()
+                await browser.close()
+
+    async def _ensure_token_captured(self, page: Page) -> None:
+        logger.info("Waiting for GetUserToken and GetUserInfo API calls...")
+        await page.wait_for_load_state("networkidle")
+        await asyncio.sleep(2)
+        max_retries = 3
+        retry_count = 0
+        while not self._token_response_text and retry_count < max_retries:
+            retry_count += 1
+            logger.warning(f"Token not captured yet, refreshing page (attempt {retry_count}/{max_retries})...")
+            try:
+                page.remove_listener("response", self._handle_response)
+                page.on("response", self._handle_response)
+                await page.reload()
+                await page.wait_for_load_state("networkidle")
+                await asyncio.sleep(3)
+                if self._token_response_text:
+                    logger.info(f"✓ Token captured after refresh (attempt {retry_count})")
+                    break
+            except Exception as e:
+                logger.warning(f"Failed to refresh page (attempt {retry_count}): {e}")
+        if not self._token_response_text:
+            logger.error("✗ Failed to capture token after all retries")
+            raise RuntimeError("JWT token is required but could not be captured after multiple attempts")
+
+    @staticmethod
+    def _fetch_user_info_sync(cookies_list: list[dict[str, Any]], token_value: str | None) -> dict[str, Any] | None:
+        try:
+            url = "https://ug-normal.trae.ai/cloudide/api/v3/trae/GetUserInfo"
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Cookie": storage_cookies_to_header(cookies_list),
+            }
+            if token_value:
+                headers["Authorization"] = f"Bearer {token_value}"
+            with httpx.Client(timeout=20.0) as client:
+                resp = client.post(url, json={"IfWebPage": True}, headers=headers)
+                if resp.status_code == 200:
+                    try:
+                        data = resp.json()
+                        return data.get("Result") or data
+                    except Exception as e:
+                        logger.warning(f"Failed to parse direct user info JSON: {e}")
+                else:
+                    logger.warning(f"GetUserInfo POST returned status {resp.status_code}")
+        except Exception as e:
+            logger.warning(f"Failed direct GetUserInfo POST: {e}")
+        return None
+
     async def run_one(self) -> None:
         logger.info("Starting single account registration process...")
         self._token_response_text = None
@@ -273,100 +343,24 @@ class TraeRegistrar:
 
             password = generate_password(self.settings.password_length)
 
-            async with async_playwright() as p:
-                logger.info("Launching browser (Headless: %s)...", self.settings.headless)
-                browser = await p.chromium.launch(
-                    headless=self.settings.headless,
-                    args=[
-                        "--disable-gpu",
-                        "--disable-dev-shm-usage",
-                        "--no-sandbox",
-                        "--disable-software-rasterizer",
-                        "--disable-extensions",
-                    ],
-                )
-                context = await browser.new_context()
-                page = await context.new_page()
-                page.on("response", self._handle_response)
-
+            async for page in self._open_page():
                 await self._sign_up(page, mail_client, email, password)
                 await storage_save_account(self.settings.accounts_file, email, password, self.accounts_lock)
                 logger.info("Account saved to: %s", self.settings.accounts_file)
-                
-                logger.info("Waiting for GetUserToken and GetUserInfo API calls...")
-                await page.wait_for_load_state("networkidle")
-                await asyncio.sleep(2)
-                
-                # Retry logic: refresh page up to 3 times if token not captured
-                max_retries = 3
-                retry_count = 0
-                
-                while not self._token_response_text and retry_count < max_retries:
-                    retry_count += 1
-                    logger.warning(f"Token not captured yet, refreshing page (attempt {retry_count}/{max_retries})...")
-                    try:
-                        # Re-register the response handler to ensure it's active after refresh
-                        page.remove_listener("response", self._handle_response)
-                        page.on("response", self._handle_response)
-                        
-                        await page.reload()
-                        await page.wait_for_load_state("networkidle")
-                        await asyncio.sleep(3)
-                        
-                        if self._token_response_text:
-                            logger.info(f"✓ Token captured after refresh (attempt {retry_count})")
-                            break
-                    except Exception as e:
-                        logger.warning(f"Failed to refresh page (attempt {retry_count}): {e}")
-                
-                if not self._token_response_text:
-                    logger.error("✗ Failed to capture token after all retries")
-                    raise RuntimeError("JWT token is required but could not be captured after multiple attempts")
-                
-
-                cookies = await context.cookies()
+                await self._ensure_token_captured(page)
+                cookies = await page.context.cookies()
                 token_value = extract_token(self._token_response_text)
-                
                 if token_value:
                     logger.info(f"✓ Token will be saved (length: {len(token_value)})")
                 else:
                     logger.warning("✗ No token captured - session will be saved without token")
-                
                 cookies_list = [dict(c) for c in cookies]
-                
-                # Prefer direct POST call to GetUserInfo endpoint
-                user_info: dict[str, Any] | None = None
-                try:
-                    url = "https://ug-normal.trae.ai/cloudide/api/v3/trae/GetUserInfo"
-                    headers = {
-                        "Content-Type": "application/json",
-                        "Accept": "application/json",
-                        "Cookie": storage_cookies_to_header(cookies_list),
-                    }
-                    if token_value:
-                        headers["Authorization"] = f"Bearer {token_value}"
-                    with httpx.Client(timeout=20.0) as client:
-                        resp = client.post(url, json={"IfWebPage": True}, headers=headers)
-                        if resp.status_code == 200:
-                            try:
-                                data = resp.json()
-                                user_info = data.get("Result") or data
-                                logger.info("✓ User info fetched via direct POST")
-                            except Exception as e:
-                                logger.warning(f"Failed to parse direct user info JSON: {e}")
-                        else:
-                            logger.warning(f"GetUserInfo POST returned status {resp.status_code}")
-                except Exception as e:
-                    logger.warning(f"Failed direct GetUserInfo POST: {e}")
-                
-                # No fallback parsing; listener exists only for observability
-                
-                # Save in old format (cookies folder)
+                user_info = self._fetch_user_info_sync(cookies_list, token_value)
+                if user_info is not None:
+                    logger.info("✓ User info fetched via direct POST")
                 session_path = self.settings.cookies_dir / f"{_safe_filename(email)}.json"
                 await storage_save_session(session_path, token_value, cookies_list)
                 logger.info("Session saved to: %s", session_path)
-                
-                # Save in new format (accounts folder) with user info
                 await storage_save_account_data(
                     self.settings.accounts_dir,
                     email,
@@ -376,11 +370,7 @@ class TraeRegistrar:
                     plan_type="Free"
                 )
                 logger.info("Account data saved to: %s/%s.json", self.settings.accounts_dir, _safe_filename(email))
-
                 await asyncio.sleep(2)
-
-                await context.close()
-                await browser.close()
 
 
 async def run_batch(total: int, concurrency: int, settings: Settings, progress_cb: Optional[Callable[[int, int], None]] = None) -> None:
