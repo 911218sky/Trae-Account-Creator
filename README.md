@@ -1,141 +1,111 @@
 # Trae Account Creator
 
 <div align="center">
-  <img src="assets/app.png" alt="App Icon" width="128" />
+  <img src="assets/app.png" alt="Trae Account Creator" width="128" />
   <br />
+  <p><b>Automated Trae account registration tool using Custom Domains and Gmail IMAP.</b></p>
 </div>
 
-Automated Trae account registration tool using custom domain and Gmail IMAP for email verification.
+## 📖 Overview
 
-## Installation
+**Trae Account Creator** is a robust automation tool designed to streamline the registration process for Trae accounts. By leveraging custom domains and Gmail IMAP for email verification, it fully automates the account creation workflow.
+
+The tool features a modern GUI for ease of use, alongside a powerful CLI for batch operations, making it suitable for both individual and bulk account management.
+
+## ✨ Key Features
+
+- **Full Automation**: Handles form filling, email verification code retrieval, and registration automatically.
+- **User-Friendly GUI**: A clean, intuitive desktop interface for managing tasks without command-line knowledge.
+- **Batch Processing**: Supports concurrent registration threads for high-efficiency bulk creation.
+- **Portable Architecture**: Browsers and dependencies are managed locally within the project, ensuring no interference with the system environment.
+- **Account Management**: Automatically saves credentials and includes utilities to merge and export account data.
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- **Python 3.12+**
+- **uv** (An extremely fast Python package installer and resolver)
 
 ```bash
-# Install uv (Python package manager)
+# Install uv
 pip install uv
+```
 
+### Installation
+
+Clone the repository and initialize the project environment:
+
+```bash
 # Install dependencies
 uv sync
 
-# Install Chromium browser into local ./browsers directory
+# Install the required local browser (Chromium)
 uv run python register.py install-browsers chromium
 ```
 
-> Note: Browsers are installed into the project-local browsers/ directory and are ignored by Git.
+### ⚙️ Configuration
 
-## Configuration
+Copy `.env.example` to a new file named `.env` in the root directory and configure your credentials.
 
-Copy `.env.example` to `.env` and fill in the following:
+**Required `.env` settings:**
 
 ```ini
-# Gmail IMAP Configuration
+# Gmail IMAP Configuration (for receiving verification codes)
 IMAP_SERVER=imap.gmail.com
 IMAP_PORT=993
 EMAIL_USER=your_email@gmail.com
-EMAIL_PASS=your_app_password  # Gmail App Password
+EMAIL_PASS=your_app_password
 
-# Custom Domain (requires Cloudflare Email Routing)
+# Custom Domain (Must be configured with Cloudflare Email Routing)
 CUSTOM_DOMAIN=your_domain.com
 ```
 
-### Gmail App Password Setup
+> **Security Note**: `EMAIL_PASS` must be a **Google App Password**, not your standard Gmail login password. You can generate one in your Google Account settings under [App passwords](https://myaccount.google.com/apppasswords).
 
-1. Enable [2-Step Verification](https://myaccount.google.com/security)
-2. Go to [App passwords](https://myaccount.google.com/apppasswords) and generate a password
-3. Copy the 16-character password to `EMAIL_PASS` in `.env`
+## 💻 Usage
 
-### Cloudflare Email Routing Setup
+### Graphical User Interface (Recommended)
 
-1. Log in to Cloudflare and select your domain
-2. Go to **Email** > **Email Routing**
-3. Enable **Catch-all address** and forward to your Gmail
-
-## Usage
+The easiest way to use the tool is via the built-in GUI:
 
 ```bash
-# Register single account
-uv run register.py
-
-# Batch registration (total concurrent)
-uv run register.py 10 2
-
-# Merge all accounts into a single JSON file
-uv run register.py merge-accounts
-
-# Merge with custom output file
-uv run register.py merge-accounts --output my_accounts.json
-```
-
-### GUI
-
-```bash
-# Launch the desktop GUI
 uv run python gui.py
 ```
 
-The GUI provides single/batch registration, browser installation to the local directory, account merging, live logs, and progress display.
+### Command Line Interface (CLI)
 
-For the compiled `.exe` version:
-```bash
-# Register accounts
-TraeAccountCreator.exe
-TraeAccountCreator.exe 10 2
-
-# Merge accounts
-TraeAccountCreator.exe merge-accounts
-TraeAccountCreator.exe merge-accounts --output my_accounts.json
-```
-
-## Account Management
-
-After registration, account data is saved in the `accounts/` directory. Each account is stored as a separate JSON file named after the email address.
-
-### File Structure
-```
-accounts/
-├── user123_example_com.json
-├── user456_example_com.json
-└── test_domain_com.json
-```
-
-### Merge All Accounts
-
-The merge functionality is now built into the main tool:
+For advanced users or automation scripts:
 
 ```bash
-# Using Python (outputs to accounts_merged-YYYY-MM-DD.json)
+# Register a single account
+uv run register.py
+
+# Batch registration (e.g., 10 accounts with 2 concurrent threads)
+uv run register.py 10 2
+```
+
+## 📂 Account Management
+
+### Data Storage
+Successfully registered accounts are saved as individual JSON files in the `accounts/` directory:
+- `accounts/user1@domain.com.json`
+- `accounts/user2@domain.com.json`
+
+### Merging Accounts
+To consolidate all registered accounts into a single file (compatible with import tools):
+
+```bash
 uv run python register.py merge-accounts
-
-# Using compiled .exe
-TraeAccountCreator.exe merge-accounts
-
-# Custom output file
-uv run python register.py merge-accounts --output my_accounts.json
 ```
+*This creates a timestamped file, e.g., `accounts_merged-2026-03-01.json`.*
 
-By default, the merged file will be named with the current date (e.g., `accounts_merged-2026-02-28.json`), making it easy to track when accounts were merged.
+## 🔗 Integration
 
-**Note:** The standalone `merge_accounts.py` script is still available for advanced use cases.
+The generated JSON files are fully compatible with [Trae Account Manager](https://github.com/Yang-505/Trae-Account-Manager). You can import the merged JSON file directly to manage your accounts centrally.
 
-### Local Browsers Directory
+## ⚠️ Disclaimer
 
-- Playwright browsers are installed to the project-local `browsers/` directory.
-- The application automatically uses `browsers/` when present.
-- `browsers/` is excluded from Git via `.gitignore` to keep the repository clean.
+This project is for educational and research purposes only. It is inspired by [S-Trespassing/Trae-Account-Creator](https://github.com/S-Trespassing/Trae-Account-Creator).
 
-### Import to Trae Account Manager
-
-1. Open [Trae-Account-Manager](https://github.com/Yang-505/Trae-Account-Manager)
-2. Navigate to **Settings** page
-3. Click **Import Data** button
-4. Select JSON files from the `accounts/` folder (or use the merged file)
-5. All account information will be imported automatically
-
-You can import individual files, select multiple files at once, or use the merged `accounts_merged.json` for batch import.
-
-## Acknowledgements
-
-This project is inspired by and references [S-Trespassing/Trae-Account-Creator](https://github.com/S-Trespassing/Trae-Account-Creator). Special thanks to the original author for the inspiration and foundation.
-
-## License
-
-GNU Affero General Public License v3.0 (AGPLv3)
+**License**: AGPLv3
