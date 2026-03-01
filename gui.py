@@ -10,6 +10,7 @@ from tkinter import ttk
 from tkinter import font as tkfont
 from PIL import Image, ImageDraw
 import logging
+import re
 from pathlib import Path
 from dataclasses import replace
 
@@ -25,17 +26,19 @@ class TextHandler(logging.Handler):
         super().__init__()
         self.widget = widget
         self.max_lines = max_lines
+        self._ansi_re = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
         self.widget.configure(state="disabled")
         self.tag = "log"
         self.widget.tag_config(self.tag, foreground="#e6e6e6")
         self.widget.tag_config("log-debug", foreground="#9aa3ad")
-        self.widget.tag_config("log-info", foreground="#e6e6e6")
-        self.widget.tag_config("log-warning", foreground="#f5c542")
-        self.widget.tag_config("log-error", foreground="#ff5e5e")
-        self.widget.tag_config("log-critical", foreground="#ff3b3b")
+        self.widget.tag_config("log-info", foreground="#00d1ff")
+        self.widget.tag_config("log-warning", foreground="#ffd166")
+        self.widget.tag_config("log-error", foreground="#ff4d4f")
+        self.widget.tag_config("log-critical", foreground="#ff006e")
 
     def emit(self, record: logging.LogRecord):
-        msg = self.format(record) + "\n"
+        msg = self.format(record)
+        msg = self._ansi_re.sub("", msg) + "\n"
         def append():
             self.widget.configure(state="normal")
             level = record.levelno
@@ -432,9 +435,11 @@ class App(tb.Window):
         handler = TextHandler(self.log_text, max_lines=2000)
         formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         handler.setFormatter(formatter)
-        if not any(isinstance(h, TextHandler) for h in self.logger.handlers):
-            self.logger.addHandler(handler)
-        self.logger.setLevel(logging.INFO)
+        for name in ("register", "mail_client"):
+            lg = logging.getLogger(name)
+            if not any(isinstance(h, TextHandler) for h in lg.handlers):
+                lg.addHandler(handler)
+            lg.setLevel(logging.INFO)
 
     def _open_settings(self):
         try:

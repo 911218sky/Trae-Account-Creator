@@ -1,6 +1,6 @@
 [project]
 name = "trae-account-creator"
-version = "0.2.5"
+version = "0.2.4"
 description = "Trae Account Creator with Gmail IMAP and Cloudflare"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -11,7 +11,7 @@ dependencies = [
     "ttkbootstrap>=1.10.1",
 ]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pyinstaller>=6.11.1",
 ]

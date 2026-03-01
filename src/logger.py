@@ -1,13 +1,31 @@
-"""Logging configuration for the mail client.
-
-This module provides centralized logging setup with configurable levels
-and structured output format.
-"""
-
 import logging
 import sys
+import os
 
 from .constants import DEFAULT_LOG_LEVEL, LOG_FORMAT
+
+
+class ColorFormatter(logging.Formatter):
+    COLORS = {
+        logging.DEBUG: "\033[90m",
+        logging.INFO: "\033[36m",
+        logging.WARNING: "\033[33m",
+        logging.ERROR: "\033[31m",
+        logging.CRITICAL: "\033[1;31m",
+    }
+    RESET = "\033[0m"
+
+    def __init__(self, fmt: str, use_color: bool):
+        super().__init__(fmt)
+        self.use_color = use_color
+
+    def format(self, record: logging.LogRecord) -> str:
+        if self.use_color:
+            color = self.COLORS.get(record.levelno, "")
+            r = logging.makeLogRecord(record.__dict__.copy())
+            r.levelname = f"{color}{record.levelname}{self.RESET}"
+            return super().format(r)
+        return super().format(record)
 
 
 def setup_logger(
@@ -15,42 +33,18 @@ def setup_logger(
     log_level: str = DEFAULT_LOG_LEVEL,
     log_format: str = LOG_FORMAT
 ) -> logging.Logger:
-    """Setup and configure logger.
-    
-    Creates a logger with console handler and specified format.
-    
-    Args:
-        name: Logger name (default: "mail_client").
-        log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
-        log_format: Log message format string.
-        
-    Returns:
-        Configured logger instance.
-        
-    Example:
-        logger = setup_logger("my_app", "DEBUG")
-        logger.info("Application started")
-    """
-    # Create logger
     logger = logging.getLogger(name)
-    
-    # Set log level
     level = getattr(logging, log_level.upper(), logging.INFO)
     logger.setLevel(level)
-    
-    # Avoid adding multiple handlers if logger already configured
     if logger.handlers:
         return logger
-    
-    # Create console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
-    
-    # Create formatter
-    formatter = logging.Formatter(log_format)
+    force_color = os.getenv("FORCE_COLOR") == "1"
+    no_color = os.getenv("NO_COLOR") == "1"
+    is_tty = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+    use_color = (force_color or is_tty) and not no_color
+    formatter = ColorFormatter(log_format, use_color)
     console_handler.setFormatter(formatter)
-    
-    # Add handler to logger
     logger.addHandler(console_handler)
-    
     return logger
