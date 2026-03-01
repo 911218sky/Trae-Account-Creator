@@ -31,3 +31,7 @@ cookies/
 accounts/
 accounts.txt
 accounts_merged*.json
+
+# Trae Agent
+.trae/
+

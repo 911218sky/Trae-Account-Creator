@@ -1,54 +1,66 @@
-# Agent Guidelines: Trae Account Creator
+# Trae Agent Guidelines
 
-You are an expert Python developer specializing in automation and browser testing.
+You are an expert Python developer focused on automation and browser testing for the Trae Account Creator project.
 
-## Project Overview
-This project is an account creator tool using:
-- **Language**: Python 3.12+
-- **Package Manager**: `uv` (extremely fast pip replacement)
-- **Automation**: `playwright` (Async API)
-- **Build Tool**: `pyinstaller`
-- **CI/CD**: GitHub Actions
+## Tech Stack
+- Language: Python 3.12+
+- Package Manager: uv
+- Automation: Playwright (Async API)
+- Build: PyInstaller with register.spec
+- CI/CD: GitHub Actions release on version tags (v*)
 
-## Coding Guidelines
+## Development Rules
+- Always use uv for dependency management.
+- Run tools and scripts via `uv run`.
+- Follow repository code style and avoid introducing secrets or binaries.
 
-### 1. Dependency Management
-- ALWAYS use `uv` for dependency management.
-- Install: `uv sync` or `uv pip install <package>`
-- Run: `uv run <script.py>`
+## Browser Automation
+- Use `async_playwright` exclusively.
+- Respect `HEADLESS` via environment variables.
+- When packaged (PyInstaller), set `PLAYWRIGHT_BROWSERS_PATH` to a local `browsers/` folder if it exists, otherwise set to `0`.
 
-### 2. Playwright & Browser Automation
-- Use **Async API** (`async_playwright`) for better concurrency.
-- Handle `HEADLESS` mode via environment variables.
-- **Critical**: For portable builds (PyInstaller), always check `sys.frozen` and set `PLAYWRIGHT_BROWSERS_PATH` correctly to support local `browsers/` folder.
-  ```python
-  if getattr(sys, 'frozen', False):
-      base_dir = os.path.dirname(sys.executable)
-      local_browsers_path = os.path.join(base_dir, 'browsers')
-      if os.path.exists(local_browsers_path):
-          os.environ["PLAYWRIGHT_BROWSERS_PATH"] = local_browsers_path
-      else:
-          os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
-  ```
+## Email Handling
+- Use `imaplib` for Gmail/IMAP.
+- Support Cloudflare Email Routing (catch-all).
+- Validate recipients strictly to ignore unrelated messages.
 
-### 3. Email Handling
-- Use `imaplib` for Gmail connections.
-- Support **Cloudflare Email Routing** (catch-all domains).
-- Implement strict recipient validation to avoid processing unrelated emails in the inbox.
+## Build & Packaging
+- Build with `uv run pyinstaller register.spec`.
+- Portable artifacts:
+  - Windows: zip with exe, .env.example, browsers/
+  - Linux/macOS: tar.gz with binary, .env.example, browsers/
+- Do not commit `.env`, `accounts.txt`, `cookies/`, or `*.exe`.
 
-### 4. Build & Release
-- Releases are automated via GitHub Actions on tags starting with `v*`.
-- Artifacts must be portable:
-  - **Windows**: `.zip` (containing `.exe`, `.env.example`, `browsers/`)
-  - **Linux/macOS**: `.tar.gz` (containing binary, `.env.example`, `browsers/`)
-- NEVER commit `.env`, `accounts.txt`, `cookies/`, or `*.exe`.
+## Git Workflow
+- Do not auto-commit or push without explicit user confirmation.
+- Use English for commit messages, tags, and PR titles.
+- You may stage changes (`git add`), then wait for user approval to commit/push.
 
-### 5. Git Operations
-- **MANDATORY**: Do NOT automatically commit or push changes to the remote repository.
-- Always ask the user for confirmation before running `git commit` or `git push`.
-- You may stage files (`git add`) but stop there and await user approval for the commit/push.
+## CI/CD
+- Pushing a tag matching `v*` triggers the release workflow.
+- The workflow installs Playwright Chromium, builds executables, and uploads Portable/Lite archives.
+
+## Repository Structure
+```text
+Trae-Account-Creator/
+├── .github/workflows/   # CI/CD pipelines (release.yml)
+├── .trae/rules/         # Agent rules (project_rules.md)
+├── assets/              # GUI icons (app.ico, app.png)
+├── src/                 # Core modules (config, mail_client, etc.)
+├── gui.py               # Main GUI entry point
+├── register.py          # CLI & Logic entry point
+├── merge_accounts.py    # Account merging utility
+├── register.spec        # PyInstaller build spec
+├── pyproject.toml       # Project configuration
+├── uv.lock              # Dependency lock file
+└── .env.example         # Environment template
+```
+
+## Validation
+- After code edits, run available lint/type-check scripts if defined.
+- Prefer `uv run` to execute tooling and tests.
 
 ## Tone & Style
 - Be concise and practical.
-- Prioritize robust error handling (e.g., "Browser not found" hints).
+- Prioritize robust error handling.
 - When suggesting commands, prefer `uv run ...`.
