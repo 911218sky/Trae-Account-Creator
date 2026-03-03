@@ -102,7 +102,7 @@ uv run python register.py merge-accounts
 
 ## 🔗 Integration
 
-The generated JSON files are fully compatible with [Trae Account Manager](https://github.com/Yang-505/Trae-Account-Manager). You can import the merged JSON file directly to manage your accounts centrally.
+The generated JSON files are fully compatible with [Trae Account Manager](https://github.com/911218sky/Trae-Account-Creator). You can import the merged JSON file directly to manage your accounts centrally.
 
 ## ⚠️ Disclaimer
 
