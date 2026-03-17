@@ -55,6 +55,8 @@ from src.storage import (
     save_account_data as storage_save_account_data,
     cookies_to_header as storage_cookies_to_header,
 )  # noqa: E402
+from src.browser.humanizer import Humanizer  # noqa: E402
+from src.browser.context import create_stealth_context  # noqa: E402
 
 logger = setup_logger("register")
 
@@ -73,6 +75,7 @@ class Settings:
     email_poll_interval_s: int
     navigation_timeout_ms: int
     signup_url: str
+    max_register_attempts: int
 
     @staticmethod
     def load() -> Settings:
@@ -99,6 +102,7 @@ class Settings:
             email_poll_interval_s=max(1, env_int("EMAIL_POLL_INTERVAL_S", 5)),
             navigation_timeout_ms=max(1_000, env_int("NAVIGATION_TIMEOUT_MS", 20_000)),
             signup_url=os.getenv("SIGNUP_URL", "https://www.trae.ai/sign-up").strip(),
+            max_register_attempts=max(1, env_int("REGISTER_RETRY_ATTEMPTS", 3)),
         )
 
 
@@ -148,6 +152,7 @@ class TraeRegistrar:
         self.settings = settings
         self.accounts_lock = accounts_lock
         self._token_response_text: str | None = None
+        self.humanizer = Humanizer()
     
     async def _handle_response(self, response: Response) -> None:
         url = response.url
@@ -190,7 +195,16 @@ class TraeRegistrar:
             attempt += 1
             await mail_client.check_emails()
             if mail_client.last_verification_code:
-                return mail_client.last_verification_code
+                recv_at = getattr(mail_client, "last_verification_code_received_at", None)
+                try:
+                    from datetime import datetime, timezone
+                    now_utc = datetime.now(timezone.utc)
+                    if recv_at and (now_utc - recv_at).total_seconds() <= 10:
+                        return mail_client.last_verification_code
+                    else:
+                        logger.info("Latest code not fresh enough, waiting for newer email...")
+                except Exception:
+                    return mail_client.last_verification_code
             logger.info("Checking email... (attempt %d)", attempt)
             await asyncio.sleep(poll_interval_s)
         return None
@@ -202,65 +216,74 @@ class TraeRegistrar:
         await page.wait_for_load_state("networkidle")
 
         logger.info("Filling email: %s", email)
-        email_input = page.get_by_role("textbox", name="Email")
-        await email_input.wait_for(state="visible", timeout=10_000)
-        await email_input.fill(email)
-        
-        logger.info("Clicking send code button...")
-        send_code_btn = page.get_by_text("Send Code")
-        await send_code_btn.click()
-        logger.info("Verification code sent, waiting for email...")
-
-        verification_code = await self._wait_for_verification_code(
-            mail_client,
-            timeout_s=self.settings.email_wait_timeout_s,
-            poll_interval_s=self.settings.email_poll_interval_s,
-        )
-        if not verification_code:
-            raise RuntimeError(
-                f"Failed to receive verification code within {self.settings.email_wait_timeout_s} seconds."
+        max_code_attempts = 3
+        attempt = 0
+        btn_count = 0
+        max_code_attempts = 3
+        while attempt < max_code_attempts:
+            attempt += 1
+            email_input = page.get_by_role("textbox", name="Email")
+            await email_input.wait_for(state="visible", timeout=10_000)
+            await self.humanizer.type_text(page, email_input, email)
+            send_code_btn = page.get_by_text("Send Code")
+            code_input = page.get_by_role("textbox", name="Verification code")
+            password_input = page.get_by_role("textbox", name="Password")
+            await code_input.wait_for(state="visible", timeout=10_000)
+            await password_input.wait_for(state="visible", timeout=10_000)
+            signup_btns = page.get_by_text("Sign Up")
+            btn_count = await signup_btns.count()
+            await self.humanizer.random_scroll(page)
+            logger.info("Clicking send code button...")
+            await self.humanizer.human_click(page, send_code_btn)
+            logger.info("Verification code sent, waiting for email...")
+            verification_code = await self._wait_for_verification_code(
+                mail_client,
+                timeout_s=self.settings.email_wait_timeout_s,
+                poll_interval_s=self.settings.email_poll_interval_s,
             )
-
-        logger.info("Entering verification code")
-        code_input = page.get_by_role("textbox", name="Verification code")
-        await code_input.wait_for(state="visible", timeout=10_000)
-        await code_input.fill(verification_code)
-        
-        logger.info("Entering password")
-        password_input = page.get_by_role("textbox", name="Password")
-        await password_input.wait_for(state="visible", timeout=10_000)
-        await password_input.fill(password)
-
-        logger.info("Submitting registration...")
-        signup_btns = page.get_by_text("Sign Up")
-        btn_count = await signup_btns.count()
-        
-        if btn_count > 1:
-            await signup_btns.nth(1).click()
-        elif btn_count == 1:
-            await signup_btns.click()
-        else:
-            await page.screenshot(path="debug_no_signup_btn.png")
-            raise RuntimeError("Could not find 'Sign Up' button")
-        
-        try:
-            await page.wait_for_url(
-                lambda url: "/sign-up" not in url, timeout=self.settings.navigation_timeout_ms
-            )
-            logger.info("Registration successful (page redirected)")
-        except Exception:
-            err_locator = page.locator(".error-message").first
-            if await err_locator.count() > 0:
-                err = (await err_locator.inner_text()).strip()
-                raise RuntimeError(f"Registration failed: {err}") from None
-            
-            current_url = page.url
-            if "/sign-up" in current_url:
-                logger.warning("Still on sign-up page after timeout - button click may have failed")
-                await page.screenshot(path="debug_after_submit.png")
+            if not verification_code:
+                raise RuntimeError(
+                    f"Failed to receive verification code within {self.settings.email_wait_timeout_s} seconds."
+                )
+            logger.info("Entering verification code")
+            await self.humanizer.type_text(page, code_input, verification_code)
+            logger.info("Entering password")
+            await self.humanizer.type_text(page, password_input, password)
+            logger.info("Submitting registration...")
+            if btn_count > 1:
+                await self.humanizer.human_click(page, signup_btns.nth(1))
+            elif btn_count == 1:
+                await self.humanizer.human_click(page, signup_btns)
             else:
-                logger.info("Registration appears successful (not on sign-up page)")
-
+                await page.screenshot(path="debug_no_signup_btn.png")
+                raise RuntimeError("Could not find 'Sign Up' button")
+            try:
+                await page.wait_for_url(
+                    lambda url: "/sign-up" not in url, timeout=self.settings.navigation_timeout_ms
+                )
+                logger.info("Registration successful (page redirected)")
+                return
+            except Exception:
+                err_locator = page.locator(".error-message").first
+                if await err_locator.count() > 0:
+                    err = (await err_locator.inner_text()).strip()
+                    if "Verification code is expired or incorrect" in err:
+                        logger.warning("Verification code expired/incorrect. Retrying with latest code...")
+                        await asyncio.sleep(1)
+                        await page.reload()
+                        await page.wait_for_load_state("networkidle")
+                        continue
+                    raise RuntimeError(f"Registration failed: {err}") from None
+                current_url = page.url
+                if "/sign-up" in current_url:
+                    logger.warning("Still on sign-up page after timeout - treat as failure")
+                    await page.screenshot(path="debug_after_submit.png")
+                    raise RuntimeError("No navigation after Sign Up click")
+                else:
+                    logger.info("Registration appears successful (not on sign-up page)")
+                    return
+        raise RuntimeError("Verification code retries exhausted")
+    
     async def _open_page(self):
         async with async_playwright() as p:
             logger.info("Launching browser (Headless: %s)...", self.settings.headless)
@@ -274,7 +297,7 @@ class TraeRegistrar:
                     "--disable-extensions",
                 ],
             )
-            context = await browser.new_context()
+            context = await create_stealth_context(browser)
             page = await context.new_page()
             page.on("response", self._handle_response)
             try:
@@ -331,46 +354,90 @@ class TraeRegistrar:
         except Exception as e:
             logger.warning(f"Failed direct GetUserInfo POST: {e}")
         return None
+    
+    @staticmethod
+    def _is_valid_user_info(user_info: dict[str, Any] | None) -> bool:
+        if not isinstance(user_info, dict):
+            return False
+        uid = str(user_info.get("UserID", "") or "").strip()
+        screen_name = str(user_info.get("ScreenName", "") or "").strip()
+        tenant_id = str(user_info.get("TenantID", "") or "").strip()
+        return bool(uid or screen_name or tenant_id)
+    
+    async def _get_user_info_with_retry(
+        self,
+        cookies_list: list[dict[str, Any]],
+        token_value: str | None,
+        max_tries: int = 3,
+        delay_s: float = 2.0,
+    ) -> dict[str, Any] | None:
+        tries = 0
+        last_info: dict[str, Any] | None = None
+        while tries < max_tries:
+            tries += 1
+            info = self._fetch_user_info_sync(cookies_list, token_value)
+            if self._is_valid_user_info(info):
+                return info
+            last_info = info
+            logger.warning(f"User info not valid, retrying ({tries}/{max_tries})...")
+            await asyncio.sleep(delay_s)
+        return last_info
 
     async def run_one(self) -> None:
         logger.info("Starting single account registration process...")
         self._token_response_text = None
 
         async with AsyncMailClient() as mail_client:
-            email = mail_client.get_email()
-            if not email:
-                raise RuntimeError("Failed to generate email. Please check CUSTOM_DOMAIN.")
+            attempt = 0
+            success = False
+            while attempt < self.settings.max_register_attempts and not success:
+                attempt += 1
+                try:
+                    email = mail_client.get_email()
+                    if not email:
+                        raise RuntimeError("Failed to generate email. Please check CUSTOM_DOMAIN.")
+                    password = generate_password(self.settings.password_length)
+                    logger.info(f"Attempt {attempt}/{self.settings.max_register_attempts} for {email}")
 
-            password = generate_password(self.settings.password_length)
-
-            async for page in self._open_page():
-                await self._sign_up(page, mail_client, email, password)
-                await storage_save_account(self.settings.accounts_file, email, password, self.accounts_lock)
-                logger.info("Account saved to: %s", self.settings.accounts_file)
-                await self._ensure_token_captured(page)
-                cookies = await page.context.cookies()
-                token_value = extract_token(self._token_response_text)
-                if token_value:
-                    logger.info(f"✓ Token will be saved (length: {len(token_value)})")
-                else:
-                    logger.warning("✗ No token captured - session will be saved without token")
-                cookies_list = [dict(c) for c in cookies]
-                user_info = self._fetch_user_info_sync(cookies_list, token_value)
-                if user_info is not None:
-                    logger.info("✓ User info fetched via direct POST")
-                session_path = self.settings.cookies_dir / f"{_safe_filename(email)}.json"
-                await storage_save_session(session_path, token_value, cookies_list)
-                logger.info("Session saved to: %s", session_path)
-                await storage_save_account_data(
-                    self.settings.accounts_dir,
-                    email,
-                    token_value,
-                    cookies_list,
-                    user_info=user_info,
-                    plan_type="Free"
-                )
-                logger.info("Account data saved to: %s/%s.json", self.settings.accounts_dir, _safe_filename(email))
-                await asyncio.sleep(2)
+                    async for page in self._open_page():
+                        await self._sign_up(page, mail_client, email, password)
+                        await self._ensure_token_captured(page)
+                        cookies = await page.context.cookies()
+                        token_value = extract_token(self._token_response_text)
+                        if token_value:
+                            logger.info(f"✓ Token captured (length: {len(token_value)})")
+                        else:
+                            logger.warning("✗ No token captured - this attempt will be retried")
+                        cookies_list = [dict(c) for c in cookies]
+                        user_info = await self._get_user_info_with_retry(cookies_list, token_value)
+                        if self._is_valid_user_info(user_info):
+                            logger.info("✓ User info verified")
+                        else:
+                            raise RuntimeError("Failed to retrieve valid user info")
+                        session_path = self.settings.cookies_dir / f"{_safe_filename(email)}.json"
+                        await storage_save_session(session_path, token_value, cookies_list)
+                        logger.info("Session saved to: %s", session_path)
+                        await storage_save_account_data(
+                            self.settings.accounts_dir,
+                            email,
+                            token_value,
+                            cookies_list,
+                            user_info=user_info,
+                            plan_type="Free"
+                        )
+                        logger.info("Account data saved to: %s/%s.json", self.settings.accounts_dir, _safe_filename(email))
+                        await storage_save_account(self.settings.accounts_file, email, password, self.accounts_lock)
+                        logger.info("✓ Account appended to: %s", self.settings.accounts_file)
+                        success = True
+                        await asyncio.sleep(2)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.exception(f"Attempt {attempt} failed: {e}")
+                    if attempt < self.settings.max_register_attempts:
+                        await asyncio.sleep(2)
+            if not success:
+                raise RuntimeError(f"Registration failed after {self.settings.max_register_attempts} attempts")
 
 
 async def run_batch(total: int, concurrency: int, settings: Settings, progress_cb: Optional[Callable[[int, int], None]] = None) -> None:
@@ -576,7 +643,7 @@ def main(argv: list[str]) -> int:
             pw_main()
             return 0
         except SystemExit as e:
-            return e.code
+            return e.code if isinstance(e.code, int) else 1
     
     if mode == "merge-accounts":
         settings = Settings.load()

@@ -28,6 +28,8 @@ a = Analysis(
         'src.exceptions',
         'src.constants',
         'src.logger',
+        'src.browser.humanizer',
+        'src.browser.context',
         'PIL',
         'PIL._tkinter_finder',
         'ttkbootstrap',
