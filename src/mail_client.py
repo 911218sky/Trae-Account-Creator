@@ -7,6 +7,7 @@ comprehensive error handling, and structured logging.
 import email.message
 import logging
 import random
+from datetime import datetime, timezone
 from email.header import decode_header
 from typing import Optional
 
@@ -64,6 +65,7 @@ class AsyncMailClient:
         # State
         self.email_address: Optional[str] = None
         self.last_verification_code: Optional[str] = None
+        self.last_verification_code_received_at: Optional[datetime] = None
     
     async def __aenter__(self) -> "AsyncMailClient":
         """Async context manager entry.
@@ -190,10 +192,24 @@ class AsyncMailClient:
         # Extract body
         body = self._extract_body(msg)
         
+        # Parse Date header
+        received_at: Optional[datetime] = None
+        try:
+            from email.utils import parsedate_to_datetime
+            date_header = msg.get("Date", "")
+            if date_header:
+                dt = parsedate_to_datetime(date_header)
+                if dt and not dt.tzinfo:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                received_at = dt
+        except Exception as e:
+            self.logger.debug(f"Error parsing Date header: {e}")
+        
         # Parse verification code
         code = self.parser.parse(body)
         if code:
             self.last_verification_code = code
+            self.last_verification_code_received_at = received_at or datetime.now(timezone.utc)
             self.logger.info(f"Extracted verification code: {code}")
         else:
             self.logger.debug("No verification code found in email")

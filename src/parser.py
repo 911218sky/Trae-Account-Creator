@@ -31,6 +31,7 @@ class CodeCandidate:
     code: str
     confidence: float
     pattern_type: str
+    position: int
 
 
 class VerificationCodeParser:
@@ -78,9 +79,9 @@ class VerificationCodeParser:
         # Find all candidates
         candidates = self.find_candidates(clean_content)
         
-        # Return the best candidate (highest confidence)
         if candidates:
-            return candidates[0].code
+            latest = max(candidates, key=lambda c: c.position)
+            return latest.code
         
         return None
     
@@ -101,7 +102,7 @@ class VerificationCodeParser:
             confidence = self._calculate_confidence(
                 code, 'continuous', content, match.start()
             )
-            candidates.append(CodeCandidate(code, confidence, 'continuous'))
+            candidates.append(CodeCandidate(code, confidence, 'continuous', match.start()))
         
         # Search for spaced digits
         for match in self._patterns['spaced'].finditer(content):
@@ -110,7 +111,7 @@ class VerificationCodeParser:
             confidence = self._calculate_confidence(
                 code, 'spaced', content, match.start()
             )
-            candidates.append(CodeCandidate(code, confidence, 'spaced'))
+            candidates.append(CodeCandidate(code, confidence, 'spaced', match.start()))
         
         # Search for dashed digits
         for match in self._patterns['dashed'].finditer(content):
@@ -119,7 +120,7 @@ class VerificationCodeParser:
             confidence = self._calculate_confidence(
                 code, 'dashed', content, match.start()
             )
-            candidates.append(CodeCandidate(code, confidence, 'dashed'))
+            candidates.append(CodeCandidate(code, confidence, 'dashed', match.start()))
         
         # Sort by confidence (highest first)
         candidates.sort(key=lambda c: c.confidence, reverse=True)
